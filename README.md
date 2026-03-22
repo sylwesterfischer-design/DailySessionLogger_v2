@@ -11,7 +11,8 @@ EA MT5 (`DailySessionLogger_v2.mq5`) + dokumentacja + skrypty pomocnicze.
 | **`scripts/`** | **PowerShell / Python** (nie `MQL5\Scripts`): junctiony, naprawa CSV, INSERT z HTML → `scripts/README.md` |
 | **Korzeń** | EA `.mq5`, `.mqproj`, `.code-workspace`, `.cursorrules*`, `.gitignore` |
 
-Szczegóły reguł dla AI: `.cursorrules`, `.cursorrules_General`, itd.  
+Szczegóły reguł dla AI: `.cursorrules-git` (skrót Git + `*.mq5`), `.cursorrules_General`, itd.  
+W **Cursorze** ustaw **Rules for this project**, żeby plik `.cursorrules-git` był brany pod uwagę (Cursor domyślnie szuka `.cursorrules` w korzeniu).  
 **Onboarding Cursor / Ollama / ograniczenia:** `.cursorrules-cursor-init-config`, `docs/MT5_DAILY_HTML_EXPORT_NOTE.md`.
 
 ---

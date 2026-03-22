@@ -5,6 +5,33 @@ Folder projektu (u Ciebie):
 
 **Cursor nie instaluje Gita ani nie zakłada konta GitHub za Ciebie** — to robisz Ty w przeglądarce / instalatorze. Cursor potem edytuje **ten sam folder** i robi `commit` jak zwykle.
 
+### Konwencja: w czym uruchamiać polecenia z tego dokumentu
+
+| Środowisko | Kiedy |
+|------------|--------|
+| **PowerShell** (Windows, także **jako Administrator** jeśli już tak pracujesz) | Domyślnie: `cd`, `git`, `where.exe` — przykłady poniżej są pod PowerShell. |
+| **Git Bash (MINGW64)** | Te same komendy `git`; ścieżki zapisuj jako `/c/Users/...` zamiast `C:\Users\...`. |
+| **Zintegrowany terminal Cursora** | Zwykle PowerShell — **te same** polecenia co w tabeli, po `cd` do roota repo. |
+| **Przeglądarka** | Tylko kroki **B2** (tworzenie repo na github.com). |
+| **MetaEditor** | Kompilacja `.mq5` — **poza** tym dokumentem; przed `git commit` wg reguł projektu. |
+
+### Twój profil Gita (ustalone ze screenów konfiguracji)
+
+| Ustawienie | Wartość (Twoje) |
+|------------|-----------------|
+| `git config --global user.name` | **Sylwester Fischer** |
+| `git config --global user.email` | **Sylwester.Fischer@gmail.com** |
+| **Login GitHub** (URL `github.com/<login>/…`) | **`sylwesterfischer-design`** — ustawienia konta pokazują ten sam identyfikator w nawiasie; **nie** `sylwester-fischer` (inny adres = zły `remote`, `push` może wisieć lub kończyć się błędem). |
+
+**Czy `user.name` musi być takie samo jak login GitHub?** **Nie.**  
+`git config user.name` / `user.email` to **podpis autora w commicie** (np. „Sylwester Fischer”). **Login GitHub** (`sylwesterfischer-design`) służy tylko do **URL** i logowania przy `push`. GitHub przypisuje commity do konta głównie przez **e-mail** — dodaj **Sylwester.Fischer@gmail.com** w GitHub → **Settings → Emails** (i ewentualnie zweryfikuj), wtedy avatary/statystyki się zgadzają. **Nie ustawiaj** `user.name` na `sylwesterfischer-design`, chyba że **świadomie** chcesz takiego podpisu w historii.
+
+**Przykładowy `remote` HTTPS dla tego projektu:**  
+`https://github.com/sylwesterfischer-design/DailySessionLogger_v2.git`  
+Jeśli dodałeś `origin` ze **złym** loginem, popraw: `git remote set-url origin <poprawny_URL>` (§ B3).
+
+**Ogólnie (inni użytkownicy dokumentu):** login GitHub to **osobna** rzecz od `user.name` — sprawdź w **Settings → Public profile** lub w URL profilu (nie myl z `C:\Users\…` na Windows).
+
 ### Cursor a Git — czy trzeba „dać uprawnienia” Cursorowi?
 
 **Nie ma** w systemie osobnej opcji typu *Allow Cursor to use Git*. Zintegrowany terminal Cursora uruchamia polecenia jako **Ty** (to samo konto Windows co zwykły PowerShell).
@@ -39,20 +66,20 @@ Instalator pyta, **jakiego edytora** ma używać Git przy `git commit` **bez** `
 | **Use Notepad++ …** | Jeśli na co dzień używasz Notepad++. |
 | **Use Vim …** (domyślne) | Dla osób znających Vim; **nie polecane**, jeśli Vim Ci nie pasuje. |
 
-**Żeby commity z terminala otwierały się w Cursorze** (po instalacji Gita), w PowerShell:
+**Żeby commity z terminala otwierały się w Cursorze** (po instalacji Gita), **środowisko: PowerShell** (lub Git Bash — te same linie `git config`):
 
 ```powershell
 git config --global core.editor "cursor --wait"
 ```
 
-**Brak jakiegokolwiek komunikatu po tej komendzie = zwykle OK** (Git przy sukcesie nic nie drukuje). Sprawdź:
+**Brak jakiegokolwiek komunikatu po tej komendzie = zwykle OK** (Git przy sukcesie nic nie drukuje). Sprawdź (**środowisko: PowerShell**):
 
 ```powershell
 git config --global --get core.editor
 ```
 
 Oczekiwany wynik: `cursor --wait`.  
-Dalej upewnij się, że Windows widzi `cursor`:
+Dalej upewnij się, że Windows widzi `cursor` (**środowisko: PowerShell** — `where.exe` to polecenie Windows):
 
 ```powershell
 where.exe cursor
@@ -217,34 +244,132 @@ cd "C:\Users\cewue\AppData\Roaming\MetaQuotes\Terminal\49C33A939697AEF354FFC0265
 
 # Jeśli JESZCZE nie było git init:
 git init
+
+# Tożsamość autora — Git wymaga tego przed pierwszym commit (to NIE jest logowanie do GitHuba):
+git config --global user.name "Twoje Imię lub nick"
+git config --global user.email "twoj_email@example.com"
+
 git add .
 git status
 git commit -m "chore: initial commit DailySessionLogger_v2"
 ```
 
-Jeśli **już** masz `.git` i commity — pomiń `git init`, od razu `git status`.
+Jeśli **już** masz `.git` i commity — pomiń `git init`, od razu `git status`.  
+Jeśli `user.name` / `user.email` masz już ustawione globalnie (`git config --global --list`), **nie musisz** ich powtarzać.
+
+### B1a. Ostrzeżenia `LF will be replaced by CRLF` przy `git add`
+
+Na **Windows**, przy typowym ustawieniu **checkout CRLF / commit LF** (`core.autocrlf`), Git przy `git add` często wypisuje:
+
+`warning: in the working copy of '...', LF will be replaced by CRLF the next time Git touches it`
+
+**To jest typowe i zwykle OK** — informacja, że końce linii będą normalizowane zgodnie z konfiguracją. Nie blokuje `git add` ani `git commit`.
+
+### B1b. Komunikat „Author identity unknown” (nie „not authorized”)
+
+Jeśli `git commit` kończy się tekstem w stylu **„Please tell me who you are”** / **„Author identity unknown”**, to znaczy, że **nie ustawiłeś** `user.name` i `user.email` (patrz blok w **B1**).  
+**To nie ma nic wspólnego** z odmową dostępu do GitHuba — do GitHuba logujesz się dopiero przy **`git push`** (Credential Manager / token).
 
 ### B2. Puste repo na GitHubie
 
 1. GitHub → **New repository**.
 2. Nazwa np. `DailySessionLogger_v2`.
 3. **Bez** README / .gitignore z strony (masz już pliki lokalnie).
-4. Utwórz repo — skopiuj URL, np.  
-   `https://github.com/TWOJ_LOGIN/DailySessionLogger_v2.git`
+4. Kliknij **Create repository** — dopiero wtedy GitHub **tworzy stronę** pod adresem `https://github.com/<login>/<nazwa>/`.  
+5. Na stronie nowego repozytorium skopiuj URL (**HTTPS**).  
+   **Uwaga:** placeholdery typu `TWOJ_LOGIN` to tylko **wzór** — nie wklejaj dosłownie. Login bierz z Settings → Public profile (u Ciebie: **`sylwesterfischer-design`**).
+
+### B2a. Przeglądarka pokazuje **404** na `github.com/.../DailySessionLogger_v2`
+
+**Najczęstsza przyczyna:** repozytorium **jeszcze nie zostało utworzone** na GitHubie (**B2**). Samo `git remote` i `git push` **nie tworzy** konta ani pustego repo — najpierw musi istnieć pusta strona repo po **New repository → Create repository**.
+
+Inne możliwości:
+
+| Objaw | Co sprawdzić |
+|--------|----------------|
+| **404** po wejściu w URL | Czy wykonałeś **Create repository** na koncie **`sylwesterfischer-design`** i nazwa to dokładnie **`DailySessionLogger_v2`** (wielkość liter)? |
+| **404** mimo że repo jest | Czy jesteś **zalogowany** w tej samej przeglądarce na **sylwesterfischer-design**? Dla **prywatnego** repo obcy / wylogowany też często widzi **404** (GitHub tak maskuje dostęp). |
+| `git push` bez końca / brak outputu | Okno **Git Credential Manager** / logowanie w **przeglądarce** — sprawdź pasek zadań; **Ctrl+C** przerywa. Potem **`git push -v origin main`** — zobaczysz więcej diagnostyki. |
+| `repository not found` / `403` w terminalu | Zły URL, brak uprawnień, lub **nie** to konto co właściciel repo — PAT / login. |
+
+**Kolejność poprawna:** **B2** (strona repo już istnieje w przeglądarce) → **B3** (`set-url` / `push`). Jeśli **B2** pominąłeś — zrób je teraz; po **Create** odśwież URL w przeglądarce.
 
 ### B3. Połączenie local → remote i pierwszy push
 
-```powershell
-cd "...DailySessionLogger_v2"
+**Środowisko: PowerShell** albo **Git Bash (MINGW64)** — **obojętne**; to te same komendy `git`. Poniżej: PowerShell + ścieżka Windows. W Git Bash: `cd /c/Users/cewue/AppData/Roaming/.../DailySessionLogger_v2`.
 
-git remote add origin https://github.com/TWOJ_LOGIN/DailySessionLogger_v2.git
+```powershell
+cd "C:\Users\cewue\AppData\Roaming\MetaQuotes\Terminal\49C33A939697AEF354FFC02653AB58DE\MQL5\Experts\Advisors\DailySessionLogger_v2"
+
+# Najprościej: wklej CAŁY adres HTTPS skopiowany z strony repo na GitHubie (Quick setup).
+# Albo złóż URL: nazwę profilu bierz z paska adresu po wejściu na swój profil (nagłówek „Twój profil Gita” w tym dokumencie):
+git remote add origin https://github.com/<GITHUB_LOGIN>/DailySessionLogger_v2.git
 git branch -M main
 git push -u origin main
 ```
 
-- Przy **HTTPS** pierwszy raz Windows/Git Credential Manager zapyta o logowanie do GitHuba (lub **Personal Access Token** zamiast hasła — zalecane: GitHub → Settings → Developer settings → PAT).
+**Przykład struktury** (wstaw **swoją** nazwę z GitHuba): `https://github.com/<GITHUB_LOGIN>/DailySessionLogger_v2.git` — **nie** używaj dosłownego tekstu `TWOJ_LOGIN` / `TWOJA_PRAWDZIWA_NAZWA` z tutoriali innych niż ten plik.
+
+- Jeśli **`git remote add`** zwróci, że `origin` już istnieje: `git remote remove origin`, potem ponów `add` z poprawnym URL (albo **`git remote set-url origin <poprawny_URL>`** — najprościej po pomyłce w loginie GitHub).
+- Przy **HTTPS** pierwszy raz Windows/**Git Credential Manager** może otworzyć **okno logowania w przeglądarce** albo **czekać w tle** — jeśli `git push` „wisi” bez tekstu, sprawdź **inne okna** (przeglądarka, małe okno Windows). **Ctrl+C** przerywa push.
+- Przy **HTTPS** logowanie do GitHuba (lub **Personal Access Token** zamiast hasła — zalecane: GitHub → Settings → Developer settings → PAT).
 
 Po sukcesie kod jest **lokalnie** i na **GitHubie**.
+
+### B3b. `HTTP 408`, `RPC failed`, `remote end hung up` przy `git push`
+
+Zdarza się, gdy **pierwszy push** wysyła **duży pakiet** (u Ciebie log pokazał ok. **274 MiB**) — timeout połączenia HTTP zanim GitHub przyjmie całość.
+
+**Środowisko: PowerShell** — spróbuj **najpierw** (raz na PC):
+
+```powershell
+git config --global http.postBuffer 524288000
+```
+
+(`524288000` ≈ 500 MB; przy potrzebie możesz spróbować `1048576000` ≈ 1 GB.)
+
+Potem w folderze repo ponów:
+
+```powershell
+git push -u origin main
+```
+
+Dodatkowo: **stabilne Wi‑Fi / kabel**, wyłączenie VPN na czas push, ewentualnie **ponowienie** po chwili (czasem chwilowa sieć).
+
+**Uwaga:** wpisy w **`.gitignore`** działają od **następnych** commitów — nie usuwają plików już zapisanych w **obecnym** commicie. W repo jest `.gitignore` ignorujący m.in. **`*.mp4` / `*.m4a`** (żeby kolejne wersje nie puchły). Jeśli **pierwszy push** dalej się nie udaje mimo bufora, duże pliki są już w historii lokalnej — wtedy albo **wielokrotne próby** push, albo osobna robota: usunięcie ich z historii (`git filter-repo` / BFG) — to dopiero na prośbę, bo zmienia historię.
+
+### B3c. `GH001: Large files detected` / `pre-receive hook declined` — na GitHubie **nie ma** gałęzi `main`
+
+GitHub **nie tworzy** `main` na serwerze, dopóki **pierwszy push nie przejdzie w całości**. Komunikat **`remote: error: GH001`** = odrzucenie: w paczce są pliki **za duże**.
+
+**Limity (typowe):**
+
+- **> 100 MB** pojedynczy plik → **twardy błąd**, push **odrzucony** (np. wideo `.mp4`).
+- **> 50 MB** → ostrzeżenie; nadal możliwy push, ale lepiej nie trzymać takich plików w repo.
+
+**Przykład z tego projektu (ścieżki z logu GitHuba):**  
+`trading_strategy/A1.mp4` (~261 MB), `reports_*/ReportHistory-*.html` (dziesiąki MB).
+
+**Środowisko: PowerShell** — usuń te pliki **z indeksu Gita** (na dysku mogą zostać), zaktualizuj `.gitignore` (w repo jest już m.in. **`reports_*/`**, **`trading_strategy/`** i **`*.mp4`**), potem **popraw historię**:
+
+1. Sprawdź liczbę commitów: `git log --oneline`  
+   - **Jeśli jest dokładnie jeden** commit (typowy pierwszy `initial`):
+
+```powershell
+cd "C:\Users\cewue\AppData\Roaming\MetaQuotes\Terminal\49C33A939697AEF354FFC02653AB58DE\MQL5\Experts\Advisors\DailySessionLogger_v2"
+
+git rm --cached "trading_strategy/A1.mp4" 2>$null
+git rm --cached "reports_10827887/ReportHistory-10827887.html" 2>$null
+git rm --cached "reports_10828174/ReportHistory-10828174.html" 2>$null
+
+git add .gitignore
+git commit --amend -m "chore: initial commit DailySessionLogger_v2"
+git push -u origin main
+```
+
+   - **Jeśli commitów jest więcej** — same `git rm --cached` + nowy commit **nie wystarczą** (stary commit nadal zawiera duże bloby). Trzeba **przepisać historię** (`git filter-repo`, BFG) albo zacząć repo od zera — wtedy dopytaj lub skorzystaj z dokumentacji GitHub „Removing sensitive data”.
+
+2. Po **udanym** pushu strona repo pokaże gałąź **`main`** i pliki.
 
 ### B4. Typowy błąd: `fatal: not a git repository`
 
@@ -253,7 +378,7 @@ Ten komunikat pojawia się, gdy uruchamiasz `git commit` (lub `git status`) **ni
 - `C:\Windows\System32` (PowerShell „jako Administrator” często startuje tu),
 - `~` / `C:\Users\cewue` (Git Bash w katalogu domowym).
 
-**Co zrobić:** przejdź do katalogu, w którym jest projekt (tam ma być folder `.git` po `git init`):
+**Co zrobić:** przejdź do katalogu, w którym jest projekt (tam ma być folder `.git` po `git init`). **Środowisko: PowerShell** (lub Git Bash z ekwiwalentem ścieżki):
 
 ```powershell
 cd "C:\Users\cewue\AppData\Roaming\MetaQuotes\Terminal\49C33A939697AEF354FFC02653AB58DE\MQL5\Experts\Advisors\DailySessionLogger_v2"
@@ -266,10 +391,12 @@ Jeśli `git status` nadal mówi, że to nie repo — w tym folderze wykonaj **ra
 
 ## Część C — codzienna praca (local + remote)
 
+**Środowisko: PowerShell** (lub Git Bash + ścieżka `/c/Users/...`).
+
 Typowy dzień:
 
 ```powershell
-cd "...DailySessionLogger_v2"
+cd "C:\Users\cewue\AppData\Roaming\MetaQuotes\Terminal\49C33A939697AEF354FFC02653AB58DE\MQL5\Experts\Advisors\DailySessionLogger_v2"
 
 # Opcjonalnie: ściągnij ewentualne zmiany z GitHuba (np. z drugiego PC)
 git pull

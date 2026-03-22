@@ -18,8 +18,11 @@ Dokument opisuje **obecnie wdrożoną** logikę raportu AccountAgeReport.csv ora
 
 ## 2. Kiedy powstaje NOWY wiersz (początek życia konta)
 
+**Zasada (intencja):** dla danego loginu w jednym „życiu konta” w CSV jest **jeden aktywny wiersz** (ten sam `period_uid`), aktualizowany po każdej sesji. **Nowy** wiersz — wyłącznie po **(A) resecie balansu brokera** albo **(B) FAIL** zakończenia okresu (i skasowaniu sidecara), **nie** z powodu samego restartu EA.
+
 - **Trigger A — reset konta:** wykryty **reset balansu** w `HandleBalanceReset()` (deal typu BALANCE z komentarzem „reset balance” / „balance reset” – `IsBalanceResetDeal()`). `UpsertAccountAgeRow()` dopisuje wiersz z **nowym** `period_uid`.
 - **Trigger B — nowy okres po FAIL:** gdy `g_day_failed` i sesja się finalizuje, `g_account_age_reported = true` i **kasowany** jest plik stanu `AccountAgeActive_<login>.state`; przy **kolejnym** `OnInit` (brak sidecar) powstaje **nowy** `period_uid` = `login` + `_` + `TimeCurrent()` — to jest **nowy** wiersz w CSV (kolejny okres po upadku konta).
+- **NIE jest triggerem nowego wiersza:** **restart EA**, przeładowanie wykresu, zmiana TF, ponowne załączenie tego samego EA na tym samym koncie **bez** resetu balansu i **bez** FAIL — wtedy ma być **ta sama** aktualizacja **tego samego** `period_uid` / wiersza. Wcześniejsza wersja kodu **łamała tę zasadę** (nowy UID po każdym starcie EA → **APPEND** zamiast UPDATE) — to **bug**, nie zmiana reguł biznesowych; poprawka: **`AccountAgeActive_<login>.state` + `HydrateAccountAgeFromCsv` + `OnDeinit`** → **`docs/CHANGE_LOG.md` ID-25**, ROOT-CAUSE: *restart EA zerował globals*.
 - **NIE jest triggerem:** skrypty reconcile, `PENDING_WRITE`, edycja innych CSV — **nie** wołają `HandleBalanceReset` ani `UpsertAccountAgeRow` z zewnątrz EA.
 
 ### 2.1 Plik stanu `AccountAgeActive_<login>.state` (Common\Files)

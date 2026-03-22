@@ -1,0 +1,7 @@
+# Reguły projektu DailySessionLogger_v2 (skrót)
+# Pełny zestaw twardych zasad: `.cursorrules_General` (m.in. CSV, core MQL5, schematy).
+
+### Git + pliki `*.mq5`
+# Po akceptacji zmian + potwierdzeniu kompilacji MT5 (0 errors): AI uruchamia w terminalu workspace git add → status → commit -m (po git diff), nie tylko wkleja tekst poleceń.
+# Kolejność: akceptacja → MetaEditor → potem commit; push tylko na prośbę.
+# Szczegóły: `.cursorrules_General` § **1d.5**.

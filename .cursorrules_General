@@ -30,6 +30,20 @@ W takich przypadkach AI nie ma pytać użytkownika o to, co jest łatwe do autom
 - **Nie są wymagane** od użytkownika żadne „specjalne dostępy” poza tym, że Cursor ma prawo uruchamiać terminal na jego koncie; ścieżki w poleceniach muszą być **poprawne** względem workspace (np. `DailySessionLogger_v2`) lub absolutne (np. `%APPDATA%\MetaQuotes\Terminal\Common\Files\...`).
 - AI **nie zakłada z góry**, że „nie da się uruchomić `py` u użytkownika”: w razie potrzeby **sprawdza** (`py --version`, krótki skrypt) albo **wyjaśnia wyjątek** (np. sandbox bez Pythona, inna maszyna, pusta odpowiedź terminala) — zamiast od razu odmawiać bez próby zgodnie z 1d.1.
 
+### 1d.5. Git — po istotnej zmianie w `*.mq5`: **uruchomienie** `git add` + `git commit` po potwierdzonej kompilacji
+- Po każdej **istotnej** zmianie w plikach **`*.mq5`** (nie przy każdej drobnej korekcji) obowiązuje przepływ:
+  1. Użytkownik **akceptuje** zmiany w Cursorze (zapis na dysk).
+  2. Użytkownik **kompiluje w MetaEditorze** i potwierdza **0 błędów** (np. „skompilowane OK”, „0 errors”, „MetaEditor OK”).
+  3. **Wtedy** AI ma w **tej samej konwersacji** — po krótkim **`git diff`** na zmienionych `*.mq5` (i ewentualnie powiązanych plikach z tej samej zmiany), żeby dobrać sensowny `-m` — **uruchomić w terminalu workspace** (PowerShell, `cd` do rootu `DailySessionLogger_v2`) sekwencję: `git add …` → `git status` → `git commit -m "…"` (prefiks `fix:` / `feat:` / `refactor:` + zwięzły opis zgodny z difem). **Nie ograniczać się** wtedy do samego wklejenia komend w czacie bez próby wykonania — chyba że użytkownik wyraźnie każe tylko tekst albo terminal jest niedostępny.
+- **Zatwierdzenie terminala:** wykonanie poleceń wymaga akceptacji run w Cursorze; jeśli użytkownik odrzuci — AI podaje **gotowy blok** do skopiowania ręcznie.
+- **Kolejność twarda:** **nie** `git commit` przed akceptacją zmian na dysku; **nie** commit przed potwierdzoną kompilacją MT5 w danym zadaniu.
+- `git push` — tylko na wyraźną prośbę lub gdy kontekst to pierwszy upload / synchronizacja z `origin`; sam **commit lokalny** już wersjonuje kod u użytkownika.
+
+### 1d.6. Dokumentacja — zawsze podawaj **środowisko wykonania** poleceń
+- W **`docs/*.md`** (oraz innych instrukcjach w repo), przy **każdym** bloku poleceń do skopiowania, AI ma **jawnie napisać**, **w czym** użytkownik ma je uruchomić: **PowerShell**, **cmd**, **Git Bash (MINGW64)**, **zintegrowany terminal Cursora** (PowerShell), **MetaEditor** (kompilacja), **Python** (`py` / `python`), itp.
+- Jeśli polecenie działa w **kilku** powłokach (np. `git` w PowerShellu i w Git Bash), dokument ma to **powiedzieć wprost** (jak w `GITHUB_SETUP_STEP_BY_STEP.md` § B3) albo podać **jedną** zalecaną powłokę + zdanie „to samo działa w …”.
+- **Zakaz:** blok kodu bez jednoznacznej etykiety typu „**Środowisko: PowerShell**” / „W PowerShell:”, gdy nie jest to oczywiste z kontekstu (np. sam `git config` na Windows).
+
 ===============================================================================
 
 ## 1) Analiza wejścia: obowiązkowa analiza wszystkich załączników
