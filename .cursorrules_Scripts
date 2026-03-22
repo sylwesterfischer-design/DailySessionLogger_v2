@@ -1,0 +1,91 @@
+# Reguły dla skryptów (Scripts) – zero spirali błędów
+
+## 1. MT5: skrypt w Navigator pojawia się dopiero po kompilacji (compile gate)
+
+- Sama obecność pliku `*.mq5` nie musi wystarczyć.
+- Po każdej zmianie/kopiowaniu pliku skryptu AI ma:
+  1. przypomnieć: `F7` w MetaEditor,
+  2. potwierdzić, że powstał plik `*.ex5` w **tym samym folderze i profilu terminala**,
+  3. dopiero potem uznać, że `Navigator -> Scripts` powinien go widzieć.
+
+## 2. Skrypt musi być w właściwym folderze: `MQL5\Scripts`
+
+- Przed diagnozą “brak skryptu w MT5” AI ma sprawdzić, że plik docelowy jest w:
+  - `Terminal\<hash>\MQL5\Scripts\<nazwa>.mq5`
+- Jeśli skrypt wyląduje w `MQL5\Experts` to często nie pojawi się w `Navigator -> Scripts`.
+
+## 3. Różne profile terminala (różne `Terminal\<hash>`) = różny Navigator
+
+- AI musi jawnie wskazać, do którego profilu `Terminal\<hash>` skopiowano plik.
+- Jeśli użytkownik uruchamia MT5 w innym profilu, AI ma dopilnować, by kompilacja i plik `*.ex5` dotyczyły dokładnie tego profilu.
+
+## 4. Copy/paste/duplikacja: brak helpera powoduje error kompilacji
+
+- Po przeniesieniu pliku AI nie ma zakładać, że wszystkie helpery/func istnieją.
+- Jeśli w kompilacji pojawi się błąd typu `undeclared identifier`, AI ma:
+  - znaleźć w kodzie brakującą funkcję (needle search po nazwie),
+  - dodać brakującą definicję w pliku lub usunąć wywołanie,
+  - powtórzyć compile gate.
+
+Przykład z tej historii: brak definicji helpera `NowTime()` po przeniesieniu skryptu wywołał `undeclared identifier` + `expression expected`.
+
+## 5. Junction scope (zakres diagnostyczny)
+
+- Przy analizach/diagnostyce skryptów AI działa wyłącznie w folderach objętych przez junctiony udostępnione przez użytkownika.
+- W podsumowaniu AI ma wskazać zakres ścieżek oraz listę plików, które były odczytane/utworzone/skopiowane podczas diagnostyki.
+
+## 5b. Junction `scripts_<LOGIN>` — wdrożenie skryptów per konto (OBOWIĄZKOWE)
+
+**Problem:** skrypt `DailySessionReconcile_Delta_<LOGIN>.mq5` musi leżeć w `MQL5\Scripts` **tego** profilu terminala, na którym użytkownik jest zalogowany jako `<LOGIN>`. Inny `Terminal\<hash>` (np. konto 11720331) **nie** jest miejscem docelowym dla skryptu pod 10828174.
+
+**Konwencja (równoległa do `logs_<LOGIN>` z `.cursorrules_General`):**
+
+- W katalogu projektu (lub w workspace) użytkownik tworzy **junction** o nazwie **`scripts_<LOGIN>`** wskazujący na:
+  - `...\MetaQuotes\Terminal\<HASH_DLA_TEGO_KONTA>\MQL5\Scripts`
+- Przykład: dla konta **10828174** → folder **`scripts_10828174`** → realny path z `36F3667EB5BDDE97A477149EF2950EBB\...\Scripts` (hash jest unikalny per instalacja).
+- **Bez ręcznego wpisywania hash:** jeśli w projekcie są już junctiony `logs_<LOGIN>_terminal` lub `logs_<LOGIN>` → `...\MQL5\Logs`, użytkownik może wygenerować `scripts_<LOGIN>` poleceniem z `docs/SCRIPTS_JUNCTIONS.md` (skrypt **`scripts/junctions/Create-ScriptsJunctions.ps1`**, lista loginów w `$ReconcileLogins`).
+
+**Obowiązek AI** po utworzeniu lub zmianie pliku skryptu powiązanego z kontem (np. `[1]DailySessionReconcile_Delta_10828174.mq5`):
+
+1. **Źródło w repo** zostaje w podfolderze projektu (np. `scripts_11720331_Reconcilled\`) — to edycja wersji źródłowej.
+2. **Wdrożenie:** jeśli w workspace **istnieje** katalog/junction `scripts_<LOGIN>`, AI **musi** skopiować (nadpisać) ten sam plik `*.mq5` do `scripts_<LOGIN>\`, żeby użytkownik nie musiał przenosić ręcznie.
+3. Jeśli `scripts_<LOGIN>` **nie widać** w workspace (brak junctiona), AI **nie udaje**, że „wystarczy jeden terminal”; ma we wstępnie napisać: utwórz junction `scripts_<LOGIN>` → `...\Terminal\<hash>\MQL5\Scripts` albo dodaj ten folder do workspace; dopiero wtedy kolejne kroki będą kopiowalne automatycznie.
+4. W podsumowaniu AI zawsze podaje: **ścieżka docelowa** (`scripts_<LOGIN>` lub jawny `Terminal\<hash>\MQL5\Scripts`) albo **powód**, czemu nie skopiowano (brak junctiona w zasięgu).
+
+**Zakaz:** kopiowanie wielu skryptów pod różne konta do jednego folderu `Scripts` „pierwszego lepszego” terminala (np. tylko 11720331).
+
+## 6. Anti-dup: usuwanie duplikatów skryptu
+
+- Gdy skrypt jest kopiowany między folderami/profilami, AI ma dbać o porządek:
+  - po ustaleniu poprawnej lokalizacji AI ma usuwać duplikaty,
+  - pozostawia tylko jedną, docelową kopię (żeby kompilacja nie “trafiała” w zły plik i nie było kolejnych takich samych błędów).
+
+## 7. Widoczność skryptu w MT5: automatyczna weryfikacja `.mq5` i `.ex5`
+
+- Gdy użytkownik pyta “gdzie jest skrypt w MT5 / czemu go nie widać / co z kompilacją”,
+  AI ma najpierw sprawdzić listing katalogu `MQL5\Scripts` dla profilu terminala, w którym działa ta instancja (czyli dla `Terminal\<hash>\`, z którego jest uruchomiony ten projekt).
+- AI ma raportować:
+  - czy istnieje `*.mq5`,
+  - czy istnieje `*.ex5`,
+  - i dla którego profilu (`Terminal\<hash>`).
+- Jeśli `*.ex5` istnieje, AI ma dopowiedzieć że Navigator zwykle widzi skrypt mimo problemów z samym `*.mq5` (ale warn, że nie da się już łatwo rekompilować bez poprawnego `*.mq5`).
+
+## 8. Pipeline Reconcile/Flush: wejścia/wyjścia i tryby TEST/REAL
+
+Przy wątkach związanych z `docs/Reconcile_Flush_PLAN.md` AI ma trzymać się reguły:
+1) `DailySessionReconcile_Delta_11720331.mq5` ma tworzyć **tylko** pliki wejściowe do flush z końcówką `*_RECONCILED*` i **nie** modyfikować produkcyjnych:
+   - `DailySessionSummary.csv`
+   - `DailySessionDeals<konto>.csv`
+2) `DailySessionSummary_Flush_Reconciled.mq5` oraz `DailySessionDeals_Flush_Reconciled.mq5`:
+   - w trybie TEST (`InpApplyToReal=false`) mają generować tylko pliki `*_FLUSH_TEST*`
+   - w trybie REAL (`InpApplyToReal=true`) mają przebudować/aktualizować docelowe CSV na podstawie istniejących `*_RECONCILED*`.
+3) Dopiero po walidacji testów AI ma rekomendować tryb REAL.
+
+## 9. Auto-kontrola plików w junction `data\` przed zaleceniem kroku
+
+Jeżeli użytkownik pyta “co uruchomić teraz” w pipeline Reconcile/Flush:
+- AI ma najpierw sprawdzić w junction `data\` (listing) czy istnieją oczekiwane pliki:
+  - `*_RECONCILED*` dla `InpLogin` i odpowiedniego zakresu dat (jeśli parametr daty jest używany),
+  - oraz czy `*_FLUSH_TEST*` już istnieją (jeśli były uruchomione poprzednio).
+- dopiero potem ma sugerować kolejny krok (często etap A można pominąć, jeśli `*_RECONCILED*` już istnieją).
+

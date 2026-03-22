@@ -1,0 +1,43 @@
+# --- MetaTrader / kompilaty ---
+*.ex5
+*.ex4
+
+# --- Runtime / duże dane (junctione do Common, logów) ---
+# Uwaga: jeśli trzymasz źródła .mq5 TYLKO w folderach scripts_* (junction),
+# rozważ osobny folder kopii w repo albo wyłącz poniższe dla wybranych ścieżek.
+logs_*/
+Report_*/
+# Eksporty HTML z MT5 w folderach reports_<LOGIN> — często 50–80+ MB (GitHub: ostrzeżenie >50 MB, push odrzucony z dużym mp4)
+reports_*/
+# Notatki, nagrania, media — poza repo (nie centrum kodu EA; duże pliki blokują GitHub)
+trading_strategy/
+data/
+
+# --- Logi ---
+*.log
+
+# --- Python (skrypty narzędziowe) ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- OS / IDE ---
+Thumbs.db
+Desktop.ini
+*.tmp
+~$*
+
+# --- Opcjonalnie sekrety ---
+.env
+*.pem
+
+# Kopie zapasowe naprawy CSV (generowane przez repair_daily_session_summary.py)
+*.csv.bak
+
+# --- Duże pliki mediów (nie wersjonuj w Git — GitHub odrzuca pojedynczy plik >100 MB, GH001) ---
+*.mp4
+*.m4a
+*.mov
+*.wav
+*.zip

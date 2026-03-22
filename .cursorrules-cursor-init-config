@@ -1,0 +1,74 @@
+# Cursor — konfiguracja wstępna i onboarding (NewFish)
+
+Ten plik to **przewodnik** (markdown w repo). Cursor **nie ładuje go automatycznie** jak głównego `.cursorrules` — możesz:
+- trzymać go jako **dokumentację** w projekcie,
+- wkleić wybrane sekcje do **Cursor → Rules** albo do pliku `.cursorrules` w korzeniu folderu, który otwierasz w Cursorze.
+
+**Powiązane:** `docs/GITHUB_SETUP_STEP_BY_STEP.md`, `docs/PYTHON_SETUP_WINDOWS.md`, `docs/MT5_DAILY_HTML_EXPORT_NOTE.md`, PDF źródłowy (u Ciebie): `D:\Cursor_Agent\env\cursor-init-config.pdf`.
+
+---
+
+## 1. Czym jest Cursor?
+
+- **Cursor** to edytor kodu (fork **Visual Studio Code**) z wbudowanym **asystentem AI** (czat, generowanie/edycja kodu, podpowiedzi).
+- **Agent / AI w Cursorze** potrafi w kontekście **otwartego folderu (workspace)** m.in.:
+  - czytać i zmieniać pliki,
+  - uruchamiać polecenia w **zintegrowanym terminalu** (np. PowerShell) — zwykle **na Twoim PC**, z Twoim `PATH` (np. `git`, `py`),
+  - proponować refaktoryzacje, testy, dokumentację.
+
+**Czym Cursor nie jest:** nie jest schedulerem np. nie uruchamia joba „o 23:59” sam z siebie ale moze pomóc w zrobieniu takiego skryptu, nie loguje się na Twoje konta brokera, nie gwarantuje poprawności finansowej ani prawnej — **Ty zatwierdzasz** zmiany i commity.
+
+---
+
+## 2. Na jakiej zasadzie działa agent?
+
+- Dajesz **prompt** (pytanie / polecenie); model **widzi** pliki z workspace (i to, co załączysz) oraz może **wywołać narzędzia** (np. edycja pliku, terminal).
+- **Reguły projektu** (np. `.cursorrules`, `.cursorrules_General`) mogą być dołączane do kontekstu — wtedy AI stosuje Twoje zasady (schematy CSV, nazewnictwo MQL5, itd.).
+- **Modele:** możesz używać modeli w chmurze (np. przez konta Cursor) albo — po konfiguracji własnego pobranego modelu — np. **lokalnie przez Ollama** (patrz §5 i PDF).
+
+---
+
+## 3. Jakie ma dostępy? Co robi „za użytkownika”?
+
+| Obszar | Typowy zakres |
+|--------|----------------|
+| **Pliki w workspace** | Odczyt/zapis w folderze projektu (np. `DailySessionLogger_v2`). |
+| **Terminal** | Polecenia, które uruchomisz lub zaakceptujesz — np. `git status`, `py skrypt.py`. |
+| **Sieć** | Zależnie od ustawień Cursora / trybu — nie zakładaj, że agent ma pełny dostęp, jeśli pracujesz offline. |
+| **MT5 / broker** | **Brak** bezpośredniego dostępu — tylko pliki (np. `.mq5`, CSV, logi) i to, co Ty uruchomisz lokalnie. |
+
+**Przykłady z pracy nad tym projektem (realne wzorce):**
+- pisanie i poprawki **MQL5** (`DailySessionLogger_v2.mq5`) z komentarzami,
+- **merge / Git**: instrukcje `git init`, `commit`, `push`, wybór edytora w instalatorze Gita,
+- **skrypty Python** (`insert_from_mt5_html.py`, `repair_...`) + uruchomienie `py` w terminalu,
+- **dokumentacja**: `PYTHON_SETUP_WINDOWS.md`, `MTP_INSERT_HTML_POSITIONS_PL_MAPPING.md`, `GITHUB_SETUP_STEP_BY_STEP.md`,
+- **reguły**: rozszerzenie `.cursorrules_General` (np. terminal / `py`).
+
+---
+
+## 4. Metoda prosta: jeden plik `.cursorrules` w folderze projektu
+
+(Zgodnie z materiałem „01 metoda prosta”.)
+
+1. W Cursorze: **File → Open Folder** → wybierz katalog projektu (np. `DailySessionLogger_v2`).
+2. W **korzeniu** tego folderu utwórz plik **`.cursorrules`** (z kropką na początku nazwy).
+3. Wklej reguły w Markdown (np. odwołanie do plików `.cursorrules_General`, `.cursorrules_Scripts` albo skrócona wersja).
+4. Zapisz (**Ctrl+S**). Cursor zwykle **automatycznie** bierze ten plik jako kontekst reguł dla czatu w tym folderze (w zależności od wersji Cursora — sprawdź też **Settings → Rules**).
+
+**Wady jednego wielkiego pliku:** trudniej utrzymywać; w tym repo reguły są **podzielone** na `.cursorrules_General`, `_Scripts`, itd. — wygodniej przy dużym zakresie.
+
+---
+
+## 5. Ollama + Cursor (skrót z `cursor-init-config.pdf`)
+
+**Idea:** lokalny serwer **Ollama** (`ollama serve`) na `localhost`, Cursor ustawiony tak, by rozmawiał z API kompatybilnym z OpenAI pod Twój endpoint.
+
+1. **Ollama:** albo instalator oficjalny / `winget`, albo folder z `ollama.exe` (jak w PDF) + opcjonalnie **PATH**.
+2. **Serwer:** w osobnym oknie PowerShell: `ollama serve` — **zostaw włączone** na czas pracy z modelami lokalnymi (albo autostart / usługa — opis w PDF).
+3. **Model:** np. `ollama pull qwen2.5:14b` (lub inny); `ollama run ...` testuje z terminala.
+4. **Cursor → Models / OpenAI-compatible:**
+   - często: dowolny placeholder w polu klucza (jeśli UI wymaga) + **Override Base URL** → `http://localhost:11434/v1` (dokładna ścieżka jak w aktualnym Cursorze — sprawdź dokumentację),
+   - wybór / wpisanie nazwy modelu (np. `qwen2.5-coder:14b` do kodu).
+
+**Uwaga (typowe problemy):** błąd **500 / exit status 2** przy dużych modelach często oznacza **VRAM / sterowniki / konflikt wersji** klienta i serwera. Po reinstalacji upewnij się, że **`ollama` w PATH** wskazuje na **tę samą** instalację co działający `ollama serve`, a nie stary folder z `Downloads`.
+

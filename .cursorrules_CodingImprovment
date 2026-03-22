@@ -1,0 +1,62 @@
+# Reguły ulepszeń kodowania (po wykrytych błędach)
+
+## MQL5 – operacje na stringach / trim
+
+- **Zakaz:** AI nie używa `StringTrimLeft` / `StringTrimRight` z dodatkowymi parametrami (np. znak do usunięcia). W MQL5 te funkcje mają inną sygnaturę niż w C#/.NET – wywołanie z drugim parametrem powoduje błąd kompilacji „wrong parameters count”.
+- **Wymóg:** Gdy trzeba usunąć znak `\r` lub `\n` z końca/początku linii (np. po `StringSplit(..., '\n', lines)` przy plikach CSV z Windows CRLF), AI stosuje **ręczne odcięcie**:
+  - sprawdzenie ostatniego znaku: `StringGetCharacter(s, StringLen(s) - 1) == '\r'`,
+  - skrócenie: `StringSubstr(s, 0, StringLen(s) - 1)`.
+- **Przy parsowaniu plików CSV (linie z pliku):**
+  - dzielenie zawartości po `\n`,
+  - z każdej linii usuwać końcowy `\r` ręcznie (jak wyżej), nie przez `StringTrimRight(s, '\r')`.
+
+Po każdym wykrytym błędzie kompilacji lub podobnej wpadce AI dopisuje tu nową regułę, żeby nie powtarzać błędu.
+
+## MQL5 – weryfikacja API (nie zgadywać nazw jak w C# / C)
+
+- **Wymóg:** Zanim AI zapisze nowy kod MQL5 (EA/skrypt/include), **nie zakłada**, że istnieje ta sama funkcja co w innym języku (np. `StrToDouble`, `atoi`, `std::string::replace`).
+- **Wymóg:** Dla każdej funkcji „podejrzanej” (konwersja string→liczba, replace, trim, split) AI **sprawdza** w dokumentacji MQL5 / w istniejącym działającym kodzie projektu (`DailySessionLogger_v2.mq5`), jak nazywa się **oficjalna** funkcja.
+- **Przykład już wykryty (eLearning):**
+  - **Nie:** `StrToDouble(s)` — w MQL5 **nie istnieje** → błąd `undeclared identifier` i często „łańcuch” błędów obok.
+  - **Tak:** `StringToDouble(s)` (lub inna z dokumentacji dla danego typu).
+- **Wymóg:** Po napisaniu fragmentu AI robi szybki **needle-check** w pliku: czy wszystkie wywołane funkcje są znane z MQL5 lub zdefiniowane lokalnie (jak w sekcji „compile gate” poniżej).
+
+## MQL5 – `StringReplace` (inna semantyka niż w wielu językach)
+
+- **Fakt:** `StringReplace` w MQL5 zwraca **`int`** (liczba wykonanych zamian) i **modyfikuje pierwszy argument przez referencję**.
+- **Zakaz:** `s = StringReplace(s, "a", "b");` — to jest logicznie błędne (przypisanie `int` do `string`) i daje ostrzeżenia / błędy kompilacji (`implicit conversion from 'int' to 'string'`).
+- **Wymóg:** `StringReplace(s, "a", "b");` — potem używać już zmienionego `s`.
+
+## MQL5 – parametry funkcji: tablica struktur (`struct`)
+
+- **Fakt:** Obiekty typu `struct` oraz tablice struktur przekazuje się **tylko przez referencję**.
+- **Zakaz:** `void Foo(SessOut sessions[])` — może dać błąd w stylu *objects are passed by reference only*.
+- **Wymóg:** `void Foo(SessOut &sessions[])` (oraz spójnie przy innych typach struct w tablicy).
+
+## MQL5 – tablice (array assignment)
+
+- **Zakaz:** W MQL5 nie wolno przypisywać jednej tablicy do drugiej w stylu `arr1 = arr2` (np. `lines = fixed`). Skutkuje to błędami kompilacji „invalid array access” dla obu zmiennych.
+- **Wymóg:** Zamiast tworzyć drugą tablicę i podstawiać ją pod pierwszą – modyfikować tablicę **w miejscu**: `ArrayResize(arr, new_size)`, potem `arr[0] = ...`, `arr[1] = ...` itd.
+
+## Nowe pliki CSV / raporty – nagłówek i logowanie
+
+- **Nagłówek zawsze w jednym miejscu:** Gdy plik CSV jest tworzony zarówno przez funkcję „EnsureHeader*” (tylko nagłówek), jak i przez inną funkcję (np. upsert przy pierwszym tworzeniu pliku), **obie ścieżki muszą zapisywać ten sam nagłówek** (sep=; + wiersz z nazwami kolumn). Nie zakładać, że plik „na pewno ma nagłówek” tylko dlatego, że istnieje.
+- **Twarda kontrola przy odczycie:** Jeśli funkcja **odczytuje** istniejący plik CSV (np. do upsertu), po wczytaniu linii **sprawdzić**, czy pierwsza linia to `sep=;` i druga to oczekiwany nagłówek. Jeśli nie – **naprawić w pamięci** (ustawić lines[0], lines[1]) i przy zapisie zapisać poprawiony plik. Dzięki temu nawet stary/uszkodzony plik zostanie naprawiony przy kolejnym wywołaniu.
+- **Logowanie tworzenia/naprawy nagłówka:** Przy tworzeniu lub naprawie nagłówka **zawsze** dodać `Print(...)` z informacją (np. „header written OK”, „header mismatch, repairing”), żeby z logów MT5 było widać, która ścieżka się wykonała i czy nagłówek został zapisany.
+
+## Pliki CSV z wieloma kontami / wieloma wierszami (np. AccountAgeReport.csv)
+
+- **Zasada CORE:** Wiersze innych kont (lub innych okresów) **NIGDY** nie są usuwane ani nadpisywane. Nadpisujemy tylko wiersz o kluczu bieżącego konta/okresu; resztę zachowujemy.
+- **Przed podziałem na linie:** Normalizować zakończenia linii w zawartości pliku: `StringReplace(content, "\r\n", "\n")`, potem `StringReplace(content, "\r", "\n")`, dopiero potem `StringSplit(content, '\n', lines)`. Dzięki temu przy różnych formatach (Windows/Unix) nie dostaniemy jednej długiej linii i przypadkowego zastąpienia całego pliku.
+- **Gdy nlines < 2 a plik duży (sz > 250):** Nie zastępować całego pliku – dopisać nowy wiersz na końcu (SEEK_END) i zakończyć; zalogować WARNING. Zapobiega to utracie wierszy innych kont przy błędzie parsowania.
+- **Logowanie:** Przy odczycie pliku logować nlines, sz, klucz (konto/start_date); przy aktualizacji – „UPDATING existing row at line i”; przy dopisywaniu – „APPENDING new row (total data rows N)”.
+
+## MQL5 – przenoszenie/kopiowanie skryptów między terminalami (compile gate)
+
+- **Błąd, który już wystąpił:** po przeniesieniu skryptu do innego terminala brakowało helpera (`NowTime()`), co dało kompilacyjne `undeclared identifier` + `expression expected`.
+- **Wymóg:** Po każdej operacji kopiuj/przenieś/duplikuj plik `.mq5` AI musi wykonać **compile gate**:
+  1) sprawdzić, czy wszystkie helpery użyte w pliku są zdefiniowane (needle check po nazwach funkcji),
+  2) sprawdzić, czy wywołania z **biblioteki MQL5** używają **prawdziwych** nazw funkcji (patrz sekcja wyżej: *MQL5 – weryfikacja API*),
+  3) dopiero potem uznać plik za „gotowy do uruchomienia”.
+- **Wymóg operacyjny dla MT5:** AI ma przypominać, że sam plik `.mq5` nie wystarczy w Navigatorze – wymagane jest `F7` i wygenerowanie `.ex5` w tym samym profilu terminala.
+- **Wymóg ścieżek:** przy pracy na wielu profilach `Terminal\\<hash>` AI musi jawnie wskazać, do którego profilu skopiowano plik, i potwierdzić istnienie pliku docelowego.

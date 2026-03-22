@@ -1,0 +1,1907 @@
+PRE-CONDITIONS / ZASADY OGÓLNE (do każdorazowej pracy z kodem MT5 / CSV)
+
+Cel: ten plik opisuje twarde zasady pracy AI z projektem.
+Uwaga: poniżej jest format „czytelny do skanowania” — znaczenie reguł pozostaje
+bez zmian.
+
+### 1d.1. Zasada “nie pytamy o to, co da się sprawdzić”
+Jeżeli użytkownik pyta o informacje typu:
+- “czy plik X już istnieje / czy jest wygenerowany”,
+- “czy plik jest **pusty / ma dane** / jaki ma rozmiar / nagłówek”,
+- “jakie pliki zostały utworzone w junction/ścieżce”,
+- “co jest w najnowszych wynikach (np. *_RECONCILED, *_FLUSH_TEST)”.
+to AI ma najpierw wykonać szybkie sprawdzenie przez listing katalogu w ramach dostępnych junctionów (primarnie `data\` i ewentualnie `logs_<LOGIN>\`), a dopiero potem odpowiedzieć.
+W takich przypadkach AI nie ma pytać użytkownika o to, co jest łatwe do automatycznie wykrycia z dysku (np. obecność plików / daty modyfikacji / nazwy).
+
+### 1d.2. Skrót numeru konta (login) w komunikacji — mapowanie dla AI
+- Użytkownik może podać tylko **końcówkę** numeru konta MT5 (np. `174`, `831`) zamiast pełnego loginu — dla szybszego pisania.
+- AI **mapuje skrót na pełny login** z kontekstu bieżącego wątku, załączników lub ustalonych w projekcie kont (np. w wątku o reconcile dla **10828174** fraza „konto **174**” oznacza **10828174**).
+- Gdy ta sama końcówka mogłaby dotyczyć **więcej niż jednego** konta albo kontekst jest niejednoznaczny, AI **dopytuje** albo prosi o **pełny numer** / zrzut z MT5.
+- W **kodzie**, **nazwach plików**, **junctionach** (`logs_<LOGIN>`, `scripts_<LOGIN>`) i **CSV** obowiązuje **zawsze pełny** `LOGIN` — skrót wyłącznie w rozmowie, nigdy jako identyfikator w kodzie.
+
+### 1d.3. ZAKAZ zgadywania stanu plików CSV / Common — obowiązek junctionów (twardy)
+- AI **nie wolno** podawać jako faktu ani „najpewniejszej przyczyny” zdań w stylu: „źródłowy plik w Common jest pusty”, „EA nie zapisał”, „plik musiał być pusty”, dopóki **nie wykona** odczytu/listingu przez dostępne w projekcie junctiony (w szczególności **`data\`** dla CSV EA, ewentualnie inne udostępnione ścieżki).
+- **Kolejność:** (1) próba `Glob` / `Read` / listing na `data\` i powiązanych junctionach; (2) jeśli brak dostępu lub pliku — **jednoznaczna informacja** „nie mam treści pliku w zasięgu workspace / brak pliku w listing”, **bez** zastępowania tego spekulacją o MT5 Common.
+- Dozwolone jest **osobno** wyjaśnienie **logiki kodu** MQL5 (np. „gdy `ReadFileCommonToString` zwróci pusty string, skrypt …”) **bez** łączenia tego w zdanie „u Ciebie dlatego plik był pusty”, jeśli nie odczytano pliku.
+- Naruszenie tej zasady = taka sama klasa błędu jak w 1d.1 — **priorytet diagnostyczny** nad szybką hipotezą.
+
+### 1d.4. Cursor: terminal agenta, `py` / Python i ścieżki (bez „sztucznych” ograniczeń)
+- Gdy użytkownik pracuje w **Cursorze na własnym PC**, agent może uruchamiać polecenia w **zintegrowanym terminalu** powiązanym z workspace — zwykle jest to **ten sam system Windows** i ten sam profil co użytkownika, w tym **`PATH`**, **`py`**, **`python`** (po odświeżeniu terminala / aliasach), o ile Python jest zainstalowany.
+- **Nie są wymagane** od użytkownika żadne „specjalne dostępy” poza tym, że Cursor ma prawo uruchamiać terminal na jego koncie; ścieżki w poleceniach muszą być **poprawne** względem workspace (np. `DailySessionLogger_v2`) lub absolutne (np. `%APPDATA%\MetaQuotes\Terminal\Common\Files\...`).
+- AI **nie zakłada z góry**, że „nie da się uruchomić `py` u użytkownika”: w razie potrzeby **sprawdza** (`py --version`, krótki skrypt) albo **wyjaśnia wyjątek** (np. sandbox bez Pythona, inna maszyna, pusta odpowiedź terminala) — zamiast od razu odmawiać bez próby zgodnie z 1d.1.
+
+===============================================================================
+
+## 1) Analiza wejścia: obowiązkowa analiza wszystkich załączników
+
+### 1. Obowiązek analizy każdego załączonego pliku
+Sam fakt załączenia pliku (kodu źródłowego, dokumentu, CSV, zrzutu ekranu itp.)
+przez użytkownika jest jednoznaczną intencją, że plik ten ma zostać
+przeanalizowany i wzięty pod uwagę przy odpowiedzi.
+
+AI nie wymaga dodatkowego polecenia typu "przeanalizuj ten plik". Dotyczy to w
+szczególności:
+- kodów MT5 (które dodatkowo muszą być kompilowane zgodnie z pkt 10),
+- plików z zasadami (jak ten),
+- logów, zrzutów błędów,
+- przykładowych danych CSV.
+
+Jeśli z jakiegoś powodu plik ma zostać zignorowany (np. jest załączony tylko jako
+kontekst historyczny), użytkownik wyraźnie to zaznaczy w treści.
+
+### 1b. Samodzielne przeglądanie kodu/logów/CSV
+Podczas analizy zapytań lub błędów, które użytkownik wysyła na bieżąco, AI ma
+obowiązek samodzielnie korzystać z dostępu do:
+- folderu z `DailySessionLogger_v2.mq5`,
+- logów MT5,
+- generowanych plików CSV.
+
+### 1c. Obowiązek zgłaszania zauważonych problemów (nawet jeśli nie zostały zgłoszone)
+Jeżeli podczas review kodu/logów/CSV AI zauważy błędy lub nieoptymalności, ma
+obowiązek je zgłosić. Przykłady:
+- CSV zapisuje się w niepoprawnym formacie i „rozjeżdża” kolumny,
+- pola (np. profit/lot) trafiają w złe kolumny (np. wyglądają jak data),
+- pojawia się jeden długi string z `;` bez rozbicia na kolumny w Excelu.
+
+### 1d. Dostęp do logów i plików CSV przy analizie problemów (JUNCTIONS – STANDARD)
+W projekcie obowiązuje **twardy standard nazw dowiązań (junctions)**, tak aby AI
+zawsze miało pełny dostęp do bieżących logów MT5 i danych CSV – bez „ślepych
+stref”:
+- `data\` – katalog z plikami CSV generowanymi przez EA (wspólny dla wszystkich kont),
+- `logs_<LOGIN>\` – katalog z logami MT5 (`MQL5\Logs`) dla konkretnego konta
+  (np. `logs_10827890`, `logs_10828174`).
+
+Zasady:
+- Dla KAŻDEGO konta, na którym uruchamiany jest `DailySessionLogger_v2.mq5`,
+  użytkownik tworzy junction `logs_<LOGIN>` wskazujący na odpowiedni folder
+  `...\MQL5\Logs` danego terminala.
+- Jeśli nazwa lub lokalizacja terminala się zmieni (nowy hash folderu MT5),
+  użytkownik aktualizuje odpowiednie junctions, zachowując **niezmienną nazwę**
+  `logs_<LOGIN>`.
+
+Obowiązki AI przy każdej analizie problemu/błędu/zapytania dotyczącego danych sesji:
+- **najpierw sprawdza** zawartość folderu `data\` oraz odpowiedniego
+  `logs_<LOGIN>\` (np. `logs_10827890`) – a nie tylko kod,
+- odwołuje się do **najnowszych plików** (np. log `YYYYMMDD.log`) w celu diagnozy,
+- jeżeli brakuje folderu `logs_<LOGIN>` lub pliku logu z bieżącej daty, **musi
+  to wprost napisać** użytkownikowi i poprosić o:
+  - utworzenie / poprawienie junction `logs_<LOGIN>`, lub
+  - ręczne załączenie odpowiedniego pliku logu.
+
+AI nie zakłada „domyślnego” dostępu do innych ścieżek logów MT5 – pracuje
+wyłącznie na `logs_<LOGIN>\` widocznych w projekcie i ma obowiązek zgłosić
+braki natychmiast, zanim zacznie spekulować o przyczynie błędu.
+
+===============================================================================
+
+## 2) Zasady modyfikacji kodu: komentarze i kontekst zmian
+
+### 2. Obowiązek dodawania opisowych komentarzy w kodzie
+Przy każdej modyfikacji kodu AI ma obowiązek opatrywać poszczególne bloki
+logiczne krótkimi komentarzami wyjaśniającymi intencję (np.:
+// Sprawdź, czy plik istnieje, // Utwórz nowy plik, // Zapisz nagłówek).
+
+Komentarze mają być zwięzłe, ale opisowe — ich celem jest ułatwienie zrozumienia
+intencji i przepływu logiki. Dotyczy to zarówno nowego kodu, jak i zmian w
+istniejącym.
+
+### 7. Każda sugerowana zmiana musi mieć kontekst w obecnym kodzie
+AI nie może sugerować zmian „bez osadzenia” (np. sama linia do podmiany).
+Wymagany format odpowiedzi:
+- (1) Kontekst — istniejący fragment kodu
+- (2) Proponowana wersja po zmianie — pełny blok pod spodem
+
+===============================================================================
+
+## 3) Zasady podsumowań i ryzyk
+
+### 3. W podsumowaniu zawsze: usunięcie plików DAILY lub SessionDD
+AI zawsze pisze w podsumowaniu, czy zmiany wymagają usunięcia plików DAILY lub
+SessionDD.
+
+### 4. W podsumowaniu zawsze: możliwe regresje innych funkcjonalności
+AI zawsze pisze w podsumowaniu, jak zmiany mogą spowodować regresję innych
+funkcjonalności.
+
+### 5. Nie zmieniaj podstawowej (core’owej) logiki bez potrzeby
+Zmiana, którą AI proponuje, nie może zmieniać podstawowej (corowej) logiki kodu.
+
+### 6. Nie wracaj do rzeczy już zaimplementowanych
+Jeśli użytkownik nie pyta o poprzednie rzeczy, oznacza to, że zostały przez niego
+zaimplementowane. AI nie wraca do nich ponownie w nowych komentarzach.
+
+### 9. W podsumowaniu zawsze: propozycja rozszerzenia warstwy logowania
+AI ma każdorazowo w podsumowaniu proponować, czy rozszerzyć warstwę logowania,
+aby uniknąć podobnych problemów w przyszłości.
+
+===============================================================================
+
+## 4) Schematy danych / CSV: obowiązkowa kontrola
+
+### 8. Schemat: zawsze podaj nagłówek i kompatybilność
+AI zawsze odnosi każdą zmianę do schematu (nagłówka i kolumn), aby nie doprowadzić
+do rozjechania się kolumn/nagłówków w CSV.
+
+### 12. Checklist „impactu” w podsumowaniu
+W każdym podsumowaniu zmian AI stosuje mini‑checklistę z pkt 13 (4 pytania).
+
+### 13. Twarda kontrola schematu przy każdej zmianie
+Przy każdej zmianie dotyczącej logowania do CSV AI ma obowiązek:
+- wypisać pełny nagłówek (lista kolumn, kolejność) dla każdego dotkniętego pliku,
+- napisać:
+  - czy nagłówek się zmienia,
+  - czy liczba kolumn się zmienia,
+  - jak wygląda przykładowy wiersz po zmianie,
+- wskazać kompatybilność istniejących danych:
+  kompatybilne / częściowo kompatybilne / niekompatybilne
+  (gdy niekompatybilne — zaproponować nowy plik zgodnie z zasadami projektu).
+
+Dodatkowa zasada bezpieczeństwa (nietykalność 4 głównych raportów):
+- AI ma obowiązek **potwierdzić wprost** w podsumowaniu każdej zmiany, że nowe
+  modyfikacje **nie mają prawa** popsuć obecnej funkcjonalności odpowiedzialnej za
+  generowanie 4 głównych raportów CSV (definicje i schematy są nietykalne bez zgody):
+  - `DailySessionSummary.csv`
+  - `DailySessionDeals<konto>.csv`
+  - `SessionDD_Thresholds.csv`
+  - `AccountDetails.csv` / `DAILY_ACCOUNTSDETAILS.csv` (jeśli używany w projekcie)
+- Jeżeli jakakolwiek zmiana **mogłaby** wpłynąć na którykolwiek z tych raportów
+  (nagłówek, kolejność kolumn, definicja pól, moment zapisu), AI musi to opisać jako
+  ryzyko regresji i **nie wdrażać** bez wyraźnej zgody użytkownika.
+
+Dodatkowa zasada (wymóg zgody użytkownika):
+- Jeśli zmiana dotyczy **schematu istniejącego pliku CSV** (nagłówek/liczba kolumn/typ danych),
+  AI **musi zapytać** użytkownika o wybór:
+  - **A)** nowy plik (zalecane domyślnie),
+  - **B)** nadpisanie/upgrade istniejącego pliku.
+- Zgoda użytkownika jest traktowana jako **jednorazowa** dla danego pliku/schematu
+  (po tej zgodzie AI może wykonać wskazaną operację bez ponownego pytania w ramach tej samej decyzji).
+
+W każdym podsumowaniu zmian AI musi odpowiedzieć na 4 pytania:
+- Czy zmiana dotyka schematu jakiegoś pliku CSV? Jeśli tak, którego i jak.
+- Czy zmiana wymaga usunięcia / zarchiwizowania / zignorowania istniejących plików?
+- Jakie są potencjalne regresje — konkretne funkcje lub raporty.
+- Czy sugerowane jest rozszerzenie warstwy logowania (np. version tag, DEBUG).
+
+===============================================================================
+
+## 5) Kompilacja i higiena zmian (MQL5)
+
+### 10. Obowiązek kompilacji przed proponowaniem zmian
+Ilekroć dostajesz ode mnie kod z MT5 w ramach zmian, AI ma obowiązek wykonać
+kompilację w swoim środowisku pamięci podręcznej, aby upewnić się, że propozycja
+zadziała (np. nie brakuje globali, MT5 obsługuje użyte funkcje).
+
+Dodatkowo AI podwójnie sprawdza:
+- kompletność klamr `{}` / `}` w całym bloku,
+- że kod pozostaje wewnątrz funkcji i nie „wycieka” na poziom globalny.
+
+===============================================================================
+
+## 5b) FIX_LOG.md – obowiązkowy dziennik prac (ISSUE / REQUIREMENT)
+
+AI ma obowiązek prowadzić i aktualizować `FIX_LOG.md` przy KAŻDEJ pracy w projekcie:
+- poprawki bugów,
+- zmiany w kodzie,
+- dodawanie/usuwanie funkcji,
+- zmiany w dokumentacji,
+- zmiany w rules.
+
+### 5b.1 Format `FIX_LOG.md` (tabela)
+`FIX_LOG.md` ma być tabelą z kolumnami:
+- `ISSUE ID`
+- `DATE`
+- `TIME`
+- `ISSUE DESCRIPTION`
+- `CHANGE`
+- `CATEGORY`
+- `ROOT-CAUSE`
+- `SOURCE`
+- `TYPE`
+- `DATA_SOURCE`
+- `MODEL_USED`
+
+### 5b.2 ISSUE ID (ciągłość i wymagania)
+- Każdy nowy temat pracy dostaje nowe `ISSUE ID` (np. `ID-13`, `ID-14` itd.).
+- `ISSUE ID` jest wymagany także dla „nowych rzeczy” (implementacja / wymaganie), nawet jeśli nie ma błędu.
+- AI ma obowiązek dopisywać nowe wiersze do tabeli w `FIX_LOG.md` na bieżąco.
+
+### 5b.3 CATEGORY (grupowanie symptomów)
+- `CATEGORY` jest stałe tak długo, jak długo rozwiązujemy TEN SAM symptom/obszar i „kręcimy się” wokół tego samego problemu.
+- Jeśli przez kilka kolejnych prób (kilka `ISSUE ID`) nadal rozwiązujemy to samo, wszystkie te `ISSUE ID` mają to samo `CATEGORY`.
+- Dopiero gdy problem w danej kategorii jest realnie rozwiązany (użytkownik potwierdza lub dane/logi to potwierdzają), uznajemy kategorię za „domkniętą”.
+
+### 5b.4 ROOT-CAUSE (tylko po rozwiązaniu)
+Zasady dla `ROOT-CAUSE`:
+- Dla bugów w trakcie diagnozy: `ROOT-CAUSE = under investigation`.
+- `ROOT-CAUSE` wolno uzupełnić dopiero w `ISSUE ID`, w którym problem został faktycznie rozwiązany (domknięcie kategorii).
+- W przypadku, gdy problem został rozwiązany od razu w pierwszym podejściu w danej kategorii: można od razu wpisać `ROOT-CAUSE` w tym samym `ISSUE ID`.
+- Dla `REQUIREMENT` (implementacja/wymaganie), gdzie nie ma błędu: `ROOT-CAUSE = n/a` (nie używamy `under investigation`).
+
+### 5b.5 SOURCE (skąd zmiana)
+Kolumna `SOURCE` wskazuje, w jakim pliku wykonano zmianę (jedna z wartości):
+- `DailySessionLogger_v2.mq5`
+- `.curorrules_CodingImprovment`
+- `.cursorrules_DocumentationUpdate`
+- `.cursorrules_General`
+
+### 5b.6 TYPE (mapowanie typu pracy)
+`TYPE` mapujemy następująco:
+- jeśli `SOURCE` to `.curorrules_CodingImprovment` lub `.cursorrules_DocumentationUpdate` lub `.cursorrules_General` → `TYPE = Improvement`
+- jeśli `SOURCE` to `DailySessionLogger_v2.mq5` → `TYPE = FIX` lub `TYPE = REQUIREMENT`
+
+Zasada dla `ROOT-CAUSE` przy `TYPE`:
+- jeśli `TYPE = REQUIREMENT` → `ROOT-CAUSE = n/a`
+- jeśli `TYPE = FIX` i trwa diagnoza → `ROOT-CAUSE = under investigation`
+- jeśli `TYPE = FIX` i kategoria jest domknięta → `ROOT-CAUSE` opisuje przyczynę (final)
+
+### 5b.7 DATA_SOURCE (których danych/CSV dotyczy)
+Kolumna `DATA_SOURCE` wskazuje, którego źródła danych dotyczy zmiana (jedna z wartości):
+- `AccountAgeReport.csv`
+- `DAILY_ACCOUNTSDETAILS.csv`
+- `DailySessionDeals<konto>.csv`
+- `DailySessionSummary.csv`
+- `SessionDD_Thresholds.csv`
+- `n/a` (gdy zmiana dotyczy tylko rules/dokumentacji, a nie danych CSV)
+
+AI ma obowiązek uzupełniać `SOURCE`, `TYPE` i `DATA_SOURCE` w każdym wierszu tabeli `FIX_LOG.md`.
+
+### 5b.8 MODEL_USED (jakim modelem wykonano pracę)
+- Kolumna `MODEL_USED` jest obowiązkowa w każdym nowym `ISSUE ID`.
+- Wartość ma wskazywać model używany w danej pracy (np. `Auto`, `qwen2.5-coder:14b`, `Premium`, `GPT-5.3 Codex Low`).
+- Jeśli model nie został rozpoznany / wystąpił błąd wyboru modelu (`Model Not Found`), wpis:
+  - `MODEL_USED = invalid-selection`
+  - a w `CHANGE` dopisz krótką notkę: `model error: Model Not Found`.
+- AI ma utrzymywać dzienny zapis modeli w `FIX_LOG.md` przez wpisy per `ISSUE ID` (to jest dzienne zestawienie per wykonana praca).
+
+===============================================================================
+
+## 6) Zasada ciągłości pliku per konto (CORE)
+
+### 11. Zasada ciągłości pliku per konto
+Obecne zachowanie:
+- Jeśli `DailySessionDeals<konto>.csv` istnieje, `EnsureHeaderDailyDealsPerAccount(perfile)`
+  tylko sprawdza istnienie i niczego nie resetuje — dopisujesz kolejne deale,
+  zachowując historię wszystkich dni.
+- Jeśli plik zostanie ręcznie skasowany, przy pierwszym wywołaniu
+  `EnsureHeaderDailyDealsPerAccount(perfile)` utworzy się nowy plik; od tego momentu
+  logujesz od pierwszej najbliższej transakcji.
+
+Tego nie ruszamy — jest zgodne z Twoją ZASADĄ.
+
+===============================================================================
+
+## 7) Definicje plików CSV i schematy (NIEZMIENNE bez zgody)
+
+### 14. Definicje plików CSV i schematy (NIEZMIENNE bez mojej zgody)
+W tym projekcie generowane są 4 główne pliki CSV. Dla każdego pliku obowiązują:
+- definicja „co oznacza jeden wiersz”,
+- pełny schemat nagłówka (lista kolumn, kolejność),
+- znaczenie każdej kolumny.
+
+Każda propozycja zmiany któregokolwiek z tych schematów (dodanie/usunięcie/
+przestawienie kolumn, zmiana znaczenia pola) musi być osobno przeze mnie
+zatwierdzona i wyraźnie opisana w podsumowaniu przez AI.
+
+-------------------------------------------------------------------------------
+
+### 14.1 DailySessionSummary.csv – globalne podsumowanie sesji
+- 1 wiersz = 1 sesja (session_id) na danym koncie.
+
+Nagłówek:
+date;konto;session_id;start_balance;end_balance;max_session_equity_drawdown;max_session_profit;max_single_lot;max_total_lot;max_margin_burned;max_session_equity_burned_percent;account_reset;minute_session_start;minute_session_end
+
+-------------------------------------------------------------------------------
+
+### 14.2 DailySessionDeals<konto>.csv – log per konto, per transakcja
+- Nazwa: DailySessionDeals<login>.csv.
+- 1 wiersz = 1 zamknięty deal w ramach danej sesji (session_id).
+
+Nagłówek (18 kolumn):
+date;konto;session_id;deal_time;deal_ticket;symbol;direction;volume;price;profit_only;max_session_equity_drawdown;max_session_profit;max_total_lot;max_margin_burned;max_session_equity_burned_percent;account_reset;minute_session_start;minute_session_end
+
+-------------------------------------------------------------------------------
+
+### 14.3 SessionDD_Thresholds.csv – log progów DD w sesjach
+Nagłówek (18 kolumn – NIEZMIENNY):
+date;konto;session_id;minute_reached;threshold;session_max_dd_so_far;margin_burned;equity_at_time;session_start_balance;session_end_balance;single_lot_current_max;total_lot_current_max;minute_session_start;minute_session_end;total_session_profit;total_session_loss;margin_call;account_closed_stop_out
+
+-------------------------------------------------------------------------------
+
+### 14.4 AccountDetails.csv (jeśli używany) – snapshot parametrów konta
+Przykładowy nagłówek (dopasować do realnego pliku):
+date;konto;broker;currency;leverage;start_balance;equity;margin_free;comment
+
+-------------------------------------------------------------------------------
+
+Zasada ogólna:
+Powyższe schematy (lista kolumn, ich kolejność i znaczenie) są NIEZMIENNE bez mojej
+wyraźnej zgody.
+
+===============================================================================
+
+## 8) Core i side-effecty: zasady bezpieczeństwa
+
+### 15. Nie dotykaj działającego core’a bez potrzeby
+AI nie może modyfikować funkcji oznaczonych przez mnie jako kluczowe (np.
+AppendDailyFinalRow, LogThreshold, UpsertDailyRowPerAccount, EndSessionFinalize),
+chyba że:
+- ja wyraźnie poproszę o zmianę tej funkcji, lub
+- AI w podsumowaniu jasno wykaże, że bez zmiany nie da się zrealizować mojego celu.
+
+W takim wypadku AI musi:
+- opisać „przed/po” – co dokładnie zmienia się w logice funkcji,
+- wskazać potencjalny wpływ na inne funkcjonalności.
+
+### 16. Jedno źródło prawdy dla powiadomień / side‑effectów
+Jeżeli funkcja odpowiada za „widoczny efekt zewnętrzny” (np. NotifySessionEnd,
+wysyłanie alertów, zapis końca sesji), AI nie może duplikować tego efektu w kilku
+miejscach. AI ma wskazać jedno miejsce (funkcję) odpowiedzialne za dany efekt i
+w podsumowaniu napisać wprost:
+„Od teraz tylko funkcja X wywołuje NotifySessionEnd; wszystkie inne wywołania usuwamy”.
+
+### 17. Rozszerzaj logowanie przy potencjalnych błędach
+Wszystkie potencjalne błędy/zmiany, które wymagałyby dodania do warstwy logowania
+muszą być proponowane na bieżąco. (Ew. testy diagnostyczne jeśli potrzeba.)
+
+===============================================================================
+
+## 9) Konwencje nazewnictwa (nietykalne)
+
+### 18. Zasada nazewnictwa
+W tym projekcie trzymamy się zawsze dokładnie nazw z pliku – czyli z podkreśleniami:
+g_login, g_day_start, g_session_start_time, g_session_max_dd, g_session_max_total_lot,
+g_day_max_margin_burned itd.
+
+===============================================================================
+
+## 10) DEFINICJE (sesja tradingowa i pola metryk)
+
+### 19. Sesja tradingowa – definicja
+- Sesja startuje, gdy liczba otwartych pozycji przechodzi z 0 → >0
+- Sesja kończy się, gdy wraca do 0 i wszystkie zamknięcia były w tej samej minucie
+  (minuta zamknięcia = minuta, w której konto stało się FLAT)
+
+### 19b. Definicje pól sesyjnych DD / zysku (NIEZMIENNE)
+- profit_only = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT)
+- max_session_equity_drawdown = min(equity_t - g_session_start_equity) w sesji
+- max_session_profit = g_session_profit_pos + g_session_profit_neg
+- max_session_equity_burned_percent = (|max_session_equity_drawdown| / g_session_start_balance) * 100%
+  (w kodzie: session_burned = (MathAbs(g_session_max_dd) / g_session_start_balance) * 100.0;)
+- max_margin_burned = max((margin / equity) * 100) w sesji
+
+===============================================================================
+
+## 11) Rozdzielenie plików global vs per‑konto
+
+### 20. Rozdzielenie plików global vs per‑konto
+Zmiany dla DailySessionSummary.csv robisz tylko w EnsureHeaderDailyGlobal().
+Zmiany dla per‑konto raportów w EnsureHeaderDaily().
+
+Każda propozycja zmiany musi zaczynać się od zdania:
+„Ta zmiana nie zmienia definicji pliku X” albo
+„Ta zmiana zmienia definicję pliku X w następujący sposób: …”.
+
+===============================================================================
+
+## 12) Notyfikacja końca sesji (NotifySessionEnd) – format CORE
+
+### 21. NotifySessionEnd – format NIEZMIENNY
+session end <session_id> dla <konto> o <minute_session_end> | max_lot=<max_total_lot> | max_dd=<max_session_equity_drawdown> | max_session_equity_burned_percent=<%DD> | max_session_profit=<profit>
+
+===============================================================================
+
+## 13) Komentarze i autoweryfikacja po kompilacji
+
+### 22. Nieusuwanie istniejących komentarzy
+Przy każdej modyfikacji kodu AI nie usuwa istniejących komentarzy, chyba że ja
+wyraźnie o to poproszę.
+
+### 23. Autoweryfikacja po kompilacji
+Po każdej informacji „skompilowałem EA” AI automatycznie sprawdza aktualny kod i
+najnowsze pliki CSV/logi MT5 pod kątem zgodności z ostatnio uzgodnionymi zmianami.
+
+===============================================================================
+
+## 14) AccountAgeReport.csv – zasady (CORE)
+
+### 24. AccountAgeReport.csv – zasady
+„AccountAgeReport.csv – 1 wiersz = 1 okres życia konta (od resetu do FAIL/stop‑out/equity < 1000 PLN).”
+„Wiersze w tym pliku nigdy nie są usuwane, mogą być jedynie nadpisywane w ramach tego samego okresu (klucz: konto + account_start_date).”
+„Po osiągnięciu g_day_failed == true dla danego okresu wiersz staje się historyczny – nie wolno go już modyfikować.”
+
+### eLearning (AccountAge — wiele wierszy przy „zdrowym” koncie)
+- **Restart EA / przeładowanie na wykres** zeruje globalne MQL5. Jeśli `period_uid` byłby budowany tylko z `TimeCurrent()` przy każdym `OnInit` bez trwałego stanu, `UpsertAccountAgeRow` nie znajduje starego UID → **APPEND** kolejnego wiersza; poprzedni wygląda na „zamrożony”. Łańcuch `account_end_balance` ≈ `account_start_balance` następnego wiersza to często **ciągłość salda**, nie reset brokera.
+- **Trwały stan:** `AccountAgeActive_<login>.state` w Common\Files + opcjonalny odczyt liczników z istniejącego wiersza CSV (`HydrateAccountAgeFromCsv`). **Skrypty reconcile ani PENDING_WRITE** nie są źródłem nowego okresu Account Age.
+- Szczegóły: `docs/AccountAgeReport_VERIFICATION.md` §2.
+
+===============================================================================
+
+## 15) Dokumentacja funkcjonalności / raportów
+
+### 25. Zasada dokumentacji funkcjonalności / raportów
+Dla każdego nowego raportu CSV oraz każdej większej funkcjonalności, AI musi
+utworzyć plik `NazwaFunkcjonalnosci_VERIFICATION.md` w katalogu EA.
+
+Plik musi zawierać: definicję raportu, źródła danych, kiedy powstaje/aktualizuje się
+wiersz, kiedy kończy życie oraz checklistę „impactu”.
+PRE-CONDITIONS / ZASADY OGÓLNE (do każdorazowej pracy z kodem MT5 / CSV)
+
+Cel: ten plik opisuje twarde zasady pracy AI z projektem.
+Uwaga: poniżej jest format „czytelny do skanowania” — znaczenie reguł pozostaje
+bez zmian.
+
+===============================================================================
+
+## 1) Analiza wejścia: obowiązkowa analiza wszystkich załączników
+
+### 1. Obowiązek analizy każdego załączonego pliku
+Sam fakt załączenia pliku (kodu źródłowego, dokumentu, CSV, zrzutu ekranu itp.)
+przez użytkownika jest jednoznaczną intencją, że plik ten ma zostać
+przeanalizowany i wzięty pod uwagę przy odpowiedzi.
+
+AI nie wymaga dodatkowego polecenia typu "przeanalizuj ten plik". Dotyczy to w
+szczególności:
+- kodów MT5 (które dodatkowo muszą być kompilowane zgodnie z pkt 10),
+- plików z zasadami (jak ten),
+- logów, zrzutów błędów,
+- przykładowych danych CSV.
+
+Jeśli z jakiegoś powodu plik ma zostać zignorowany (np. jest załączony tylko jako
+kontekst historyczny), użytkownik wyraźnie to zaznaczy w treści.
+
+### 1b. Samodzielne przeglądanie kodu/logów/CSV (bez proszenia o ponowne załączniki)
+Podczas analizy zapytań lub błędów, które użytkownik wysyła na bieżąco, AI ma
+obowiązek samodzielnie korzystać z dostępu do:
+- folderu z `DailySessionLogger_v2.mq5`,
+- logów MT5,
+- generowanych plików CSV.
+
+### 1c. Obowiązek zgłaszania zauważonych problemów, nawet jeśli użytkownik o nich nie napisał
+Jeżeli podczas review kodu/logów/CSV AI zauważy błędy lub nieoptymalności, ma
+obowiązek je zgłosić. Przykłady:
+- CSV zapisuje się w niepoprawnym formacie i „rozjeżdża” kolumny,
+- pola (np. profit/lot) trafiają w złe kolumny (np. wyglądają jak data),
+- pojawia się jeden długi string z `;` bez rozbicia na kolumny w Excelu.
+
+### 1d. Dostęp do logów i plików CSV przy analizie problemów
+W projekcie utworzono dowiązania symboliczne (junction) do folderów:
+- `data` → zawiera pliki CSV generowane przez EA
+  (np. DAILY_ACCOUNTSDETAILS.csv, DailySessionSummary.csv,
+  SessionDD_Thresholds.csv, DailySessionDeals*.csv)
+- `logs` → zawiera logi MT5 (pliki `.log`)
+
+Przy każdej analizie problemu, błędów lub zapytań dotyczących danych sesji, AI ma
+obowiązek:
+- sprawdzić zawartość folderów `data` i `logs`,
+- odnieść się do najnowszych plików (np. z dzisiejszą datą) w celu diagnozy,
+- jeśli pliki są niekompletne lub brakuje ich — poinformować użytkownika.
+
+AI może również prosić użytkownika o wskazanie konkretnego pliku do analizy,
+jeśli to konieczne.
+
+===============================================================================
+
+## 2) Zasady modyfikacji kodu: komentarze i kontekst zmian
+
+### 2. Obowiązek dodawania opisowych komentarzy w kodzie
+Przy każdej modyfikacji kodu AI ma obowiązek opatrywać poszczególne bloki
+logiczne krótkimi komentarzami wyjaśniającymi, co się w nich dzieje (np.:
+// Sprawdź, czy plik istnieje, // Utwórz nowy plik, // Zapisz nagłówek).
+
+Komentarze mają być zwięzłe, ale opisowe — ich celem jest ułatwienie zrozumienia
+intencji i przepływu logiki. Dotyczy to zarówno nowego kodu, jak i zmian w
+istniejącym.
+
+### 7. Każda sugerowana zmiana musi mieć kontekst w obecnym kodzie
+AI nie może sugerować zmian „bez osadzenia” (np. sama linia do podmiany).
+Wymagany format odpowiedzi:
+- (1) Kontekst — istniejący fragment kodu
+- (2) Proponowana wersja po zmianie — pełny blok pod spodem
+
+===============================================================================
+
+## 3) Zasady podsumowań i ryzyk
+
+### 3. W podsumowaniu zawsze: wpływ na usuwanie plików DAILY lub SessionDD
+AI zawsze pisze w podsumowaniu, czy zmiany wymagają usunięcia plików DAILY lub
+SessionDD.
+
+### 4. W podsumowaniu zawsze: możliwe regresje innych funkcjonalności
+AI zawsze pisze w podsumowaniu, jak zmiany mogą spowodować regresję innych
+funkcjonalności.
+
+### 5. Nie zmieniaj podstawowej (core’owej) logiki bez potrzeby
+Zmiana, którą AI proponuje, nie może zmieniać podstawowej (corowej) logiki kodu.
+
+### 6. Nie wracaj do rzeczy już zaimplementowanych, jeśli użytkownik o to nie pyta
+Jeśli użytkownik nie pyta o poprzednie rzeczy, oznacza to, że zostały przez niego
+zaimplementowane. AI nie wraca do nich ponownie w nowych komentarzach z
+wyjaśnieniami/przypomnieniami.
+
+### 9. W podsumowaniu zawsze: propozycja rozszerzenia warstwy logowania
+AI ma każdorazowo w podsumowaniu proponować, czy rozszerzyć warstwę logowania,
+aby uniknąć podobnych problemów w przyszłości.
+
+===============================================================================
+
+## 4) Schematy danych / CSV: obowiązkowa kontrola
+
+### 8. Schemat: twarde odniesienie do nagłówka i kolumn
+AI zawsze pisze zmiany w bazie/tabeli (tu: CSV) jaki jest schemat. Cokolwiek
+zmieniasz na schemacie lub funkcjach/nowych funkcjach, musisz odnosić do schematu
+czy schemat na dany nagłówek, aby nie doprowadzić do rozjechania się kolumn /
+nagłówków w generowanych plikach CSV.
+
+### 12. Checklist „impactu” w podsumowaniu
+„W każdym podsumowaniu zmian AI stosuje mini‑checklistę z pkt 13 (4 pytania).”
+
+### 13. Twarda kontrola schematu przy każdej zmianie
+Przy każdej zmianie dotyczącej logowania do CSV AI ma obowiązek:
+- wypisać pełny nagłówek (lista kolumn, kolejność) dla każdego dotkniętego pliku,
+- napisać:
+  - czy nagłówek się zmienia,
+  - czy liczba kolumn się zmienia,
+  - jak wygląda przykładowy wiersz po zmianie,
+- wskazać, czy istniejące dane w tym pliku będą:
+  kompatybilne / częściowo kompatybilne / niekompatybilne (wtedy musi zaproponować
+  nowy plik zgodnie z zasadą „nowy schemat = nowy plik”, jeśli obowiązuje).
+
+W każdym podsumowaniu zmian AI musi odpowiedzieć na 4 pytania:
+- Czy zmiana dotyka schematu jakiegoś pliku CSV? Jeśli tak, którego i jak.
+- Czy zmiana wymaga usunięcia / zarchiwizowania / zignorowania istniejących plików?
+- Jakie są potencjalne regresje — konkretne funkcje lub raporty.
+- Czy sugerowane jest rozszerzenie warstwy logowania (np. version tag, DEBUG).
+
+===============================================================================
+
+## 5) Kompilacja i higiena zmian (MQL5)
+
+### 10. Obowiązek kompilacji przed proponowaniem zmian
+Ilekroć dostajesz ode mnie kod z MT5 w ramach zmian, AI ma obowiązek wykonać
+kompilację w swoim środowisku pamięci podręcznej, aby upewnić się, że to co
+proponuje zadziała (np. nie brakuje globala, MT5 obsługuje użyte funkcje).
+
+Po naszej poprawce z błędem kompilacji ustaliliśmy, że przy każdej propozycji zmian
+AI podwójnie sprawdza:
+- kompletność klamr `{}` / `}` w całym bloku,
+- że kod pozostaje wewnątrz funkcji i nie „wycieka” na poziom globalny.
+
+===============================================================================
+
+## 6) Zasada ciągłości pliku per konto (CORE)
+
+### 11. Zasada ciągłości pliku per konto
+Obecne zachowanie:
+- Jeśli DailySessionDeals<konto>.csv istnieje, EnsureHeaderDailyDealsPerAccount(perfile)
+  tylko sprawdza istnienie i niczego nie resetuje — dopisujesz kolejne deale,
+  zachowując historię wszystkich dni.
+- Jeśli plik zostanie ręcznie skasowany, przy pierwszym wywołaniu
+  EnsureHeaderDailyDealsPerAccount(perfile) utworzy się nowy plik; od tego momentu
+  logujesz od pierwszej najbliższej transakcji (czyli „od zera” w sensie nowego pliku,
+  ale tylko dla kolejnych dni/tego dnia).
+
+Tego nie ruszamy — jest zgodne z Twoją ZASADĄ.
+
+===============================================================================
+
+## 7) Definicje plików CSV i schematy (NIEZMIENNE bez zgody)
+
+### 14. Definicje plików CSV i schematy (NIEZMIENNE bez mojej zgody)
+W tym projekcie generowane są 4 główne pliki CSV. Dla każdego pliku obowiązują
+jednocześnie:
+- definicja „co oznacza jeden wiersz”,
+- pełny schemat nagłówka (lista kolumn, kolejność),
+- znaczenie każdej kolumny.
+
+Każda propozycja zmiany któregokolwiek z tych schematów (dodanie/usunięcie/
+przestawienie kolumn, zmiana znaczenia pola) musi być osobno przeze mnie
+zatwierdzona i wyraźnie opisana w podsumowaniu przez AI.
+
+-------------------------------------------------------------------------------
+
+### 14.1 DailySessionSummary.csv – globalne podsumowanie sesji
+- 1 wiersz = 1 sesja (session_id) na danym koncie.
+- Każdy wiersz to podsumowanie TOTALS dla jednej sesji (profit, DD, loty, margin)
+  w danym dniu.
+
+Nagłówek (po dodaniu nowej kolumny):
+date;konto;session_id;start_balance;end_balance;max_session_equity_drawdown;max_session_profit;max_single_lot;max_total_lot;max_margin_burned;max_session_equity_burned_percent;account_reset;minute_session_start;minute_session_end
+
+Definicje kolumn:
+- date – data dnia (g_day_start).
+- konto – login MT5.
+- session_id – identyfikator sesji.
+- start_balance – balance na starcie sesji.
+- end_balance – balance na końcu sesji.
+- max_session_equity_drawdown – najgorszy equity DD w PLN w tej sesji (wartość ujemna lub 0).
+- max_session_profit – łączny wynik sesji w PLN (suma wszystkich profit_only dla danego session_id).
+- max_single_lot – maksymalny pojedynczy wolumen pozycji w sesji.
+- max_total_lot – maksymalna łączna wielkość pozycji w sesji.
+- max_margin_burned – max margin used % w sesji (maksimum z (margin / equity) * 100 w trakcie sesji).
+- max_session_equity_burned_percent – max equity burned % w sesji: (|max_session_equity_drawdown| / start_balance * 100).
+- account_reset – status dnia/sesji: FAILED, RESET lub pusty.
+- minute_session_start – minuta startu sesji (lokalnie).
+- minute_session_end – minuta końca sesji (lokalnie).
+
+-------------------------------------------------------------------------------
+
+### 14.2 DailySessionDeals<konto>.csv – log per konto, per transakcja
+- Nazwa: DailySessionDeals<login>.csv.
+- 1 wiersz = 1 zamknięty deal (transakcja) w ramach danej sesji (session_id).
+- Wiele wierszy z tym samym session_id opisuje wszystkie transakcje danej sesji na tym koncie.
+
+Nagłówek (18 kolumn):
+date;konto;session_id;deal_time;deal_ticket;symbol;direction;volume;price;profit_only;max_session_equity_drawdown;max_session_profit;max_total_lot;max_margin_burned;max_session_equity_burned_percent;account_reset;minute_session_start;minute_session_end
+
+Definicje kolumn:
+- date – data dnia (g_day_start).
+- konto – login MT5.
+- session_id – identyfikator sesji.
+- deal_time – czas zamknięcia deala (lokalny, zaokrąglony do minuty).
+- deal_ticket – ticket MT5.
+- symbol – instrument (np. BTCUSD).
+- direction – buy / sell.
+- volume – wolumen pozycji w lotach (LotStr).
+- price – cena zamknięcia deala.
+- profit_only – zysk/strata tej jednej transakcji (DEAL_PROFIT, bez swapów/komisji jeśli tak zdefiniowane).
+- max_session_equity_drawdown – najgorszy equity DD w PLN w tej sesji (stały dla wszystkich wierszy danego session_id).
+- max_session_profit – łączny wynik sesji w PLN (suma profit_only dla danego session_id).
+- max_total_lot – maksymalna łączna wielkość pozycji w sesji.
+- max_margin_burned – max margin used % w sesji (maksimum z (margin / equity) * 100 w trakcie sesji).
+- max_session_equity_burned_percent – max equity burned % w sesji: (|max_session_equity_drawdown| / start_balance * 100).
+- account_reset – FAILED / RESET / pusty.
+- minute_session_start – minuta startu sesji (lokalnie).
+- minute_session_end – minuta końca sesji (lokalnie).
+
+-------------------------------------------------------------------------------
+
+### 14.3 SessionDD_Thresholds.csv – log progów DD w sesjach
+- 1 wiersz = jedno przekroczenie konkretnego poziomu DD/threshold w danej sesji.
+- Plik opisuje historię „schodzenia w dół” po progach DD (np. -1000, -2000 itd.) z
+  dodatkowymi informacjami o equity, marginie i lotach.
+
+Nagłówek (18 kolumn – NIEZMIENNY):
+date;konto;session_id;minute_reached;threshold;session_max_dd_so_far;margin_burned;equity_at_time;session_start_balance;session_end_balance;single_lot_current_max;total_lot_current_max;minute_session_start;minute_session_end;total_session_profit;total_session_loss;margin_call;account_closed_stop_out
+
+Definicje kolumn:
+- date – data dnia.
+- konto – login MT5.
+- session_id – identyfikator sesji.
+- minute_reached – minuta, w której osiągnięto dany próg DD.
+- threshold – wartość progu DD (np. -1000, -2000).
+- session_max_dd_so_far – maksymalny DD w PLN do tego momentu sesji.
+- margin_burned – wartość procentowa zgodna z logiką tego pliku (zużycie/burned względem startu w chwili progu).
+- equity_at_time – equity w momencie osiągnięcia progu.
+- session_start_balance – balance na starcie sesji.
+- session_end_balance – balance na końcu sesji (dla tej sesji).
+- single_lot_current_max – maksymalny pojedynczy wolumen pozycji do tego momentu sesji.
+- total_lot_current_max – maksymalny łączny wolumen pozycji do tego momentu sesji.
+- minute_session_start – minuta startu sesji.
+- minute_session_end – minuta końca sesji.
+- total_session_profit – całkowity wynik sesji (profit) w momencie logu progu.
+- total_session_loss – całkowita suma strat sesji w momencie logu progu.
+- margin_call – flaga (0/1 lub false/true), czy wystąpił margin call.
+- account_closed_stop_out – flaga, czy konto zostało zamknięte przez stop out.
+
+-------------------------------------------------------------------------------
+
+### 14.4 AccountDetails.csv (jeśli używany) – snapshot parametrów konta
+- 1 wiersz = jeden snapshot parametrów konta (np. start dnia, reset, zmiana ustawień).
+
+Przykładowy nagłówek (dopasować do realnego pliku):
+date;konto;broker;currency;leverage;start_balance;equity;margin_free;comment
+
+Definicje kolumn (do doprecyzowania po pokazaniu pliku):
+- date – data snapshotu.
+- konto – login MT5.
+- broker – nazwa brokera/serwera.
+- currency – waluta konta.
+- leverage – dźwignia.
+- start_balance – balance na moment snapshotu.
+- equity – equity na moment snapshotu.
+- margin_free – wolny margin na moment snapshotu.
+- comment – komentarz (np. „reset balansu”, „zmiana brokera” itp.).
+
+-------------------------------------------------------------------------------
+
+Zasada ogólna:
+Powyższe schematy (lista kolumn, ich kolejność i znaczenie) są NIEZMIENNE bez
+mojej wyraźnej zgody.
+
+AI ma przy każdej propozycji zmiany logiki CSV:
+- wypisać pełny nagłówek,
+- napisać, czy nagłówek i liczba kolumn się zmienia,
+- podać przykładowy wiersz po zmianie,
+- określić kompatybilność istniejących danych (kompatybilne / częściowo / niekompatybilne).
+
+===============================================================================
+
+## 8) Core i side-effecty: zasady bezpieczeństwa
+
+### 15. Nie dotykaj działającego core’a bez potrzeby
+AI nie może modyfikować funkcji oznaczonych przez mnie jako kluczowe (np.
+AppendDailyFinalRow, LogThreshold, UpsertDailyRowPerAccount, EndSessionFinalize),
+chyba że:
+- ja wyraźnie poproszę o zmianę tej funkcji, lub
+- AI w podsumowaniu jasno wykaże, że bez zmiany tej funkcji nie da się zrealizować mojego celu.
+
+W takim wypadku AI musi:
+- opisać „przed/po” – co dokładnie zmienia się w logice funkcji,
+- wskazać potencjalny wpływ na inne funkcjonalności (np. zamykanie sesji,
+  powiadomienia, liczenie DD).
+
+### 16. Jedno źródło prawdy dla powiadomień / side‑effectów
+Jeżeli jakaś funkcja odpowiada za „widoczny efekt zewnętrzny” (np. NotifySessionEnd,
+wysyłanie alertów, zapis końca sesji), AI nie może duplikować tego efektu w kilku
+miejscach.
+
+AI ma:
+- wskazać jedno miejsce (funkcję), która będzie odpowiedzialna za dany efekt,
+- w podsumowaniu napisać wprost:
+  „Od teraz tylko funkcja X wywołuje NotifySessionEnd; wszystkie inne wywołania usuwamy”.
+
+To jest reakcja na chwilowe dublowanie NotifySessionEnd w UpsertDailyRowPerAccount
+i EndSessionFinalize.
+
+### 17. Rozszerzaj logowanie przy potencjalnych błędach
+Wszystkie potencjalne błędy/zmiany, które wymagałyby dodania do warstwy logowania,
+muszą być proponowane przez AI na bieżąco, aby w przyszłości uniknąć takich samych
+błędów i problemów z diagnozą. Ew. testy diagnostyczne jeśli potrzeba.
+
+===============================================================================
+
+## 9) Konwencje nazewnictwa (nietykalne)
+
+### 18. Zasada nazewnictwa
+W tym projekcie trzymamy się zawsze dokładnie nazw z pliku – czyli z podkreśleniami:
+g_login, g_day_start, g_session_start_time, g_session_max_dd, g_session_max_total_lot,
+g_day_max_margin_burned itd.
+
+Jeśli podaję Ci fragment funkcji, nie wolno mi zmieniać stylu (np. na glogin, gdaystart),
+tylko używam dokładnie tych identycznych identyfikatorów.
+
+Jeżeli kiedyś będziemy robić refactor nazw, to robimy to globalnie: najpierw pokazuję
+pełny diff „stare → nowe”, a dopiero potem zmieniam wszystkie wystąpienia w całym
+pliku, nigdy mieszanki dwóch stylów.
+
+===============================================================================
+
+## 10) DEFINICJE (sesja tradingowa i pola metryk)
+
+### 19. Sesja tradingowa – definicja
+- Sesja startuje, gdy liczba otwartych pozycji przechodzi z 0 → >0
+- Sesja kończy się, gdy wraca do 0 i wszystkie zamknięcia były w tej samej minucie
+  (my uznajemy “minutę zamknięcia sesji” = minuta, w której konto stało się FLAT)
+
+### 19b. Definicje pól sesyjnych DD / zysku (NIEZMIENNE)
+Dla wszystkich logów sesyjnych (notyfikacje, DailySessionDeals<konto>.csv,
+DailySessionSummary.csv) obowiązują stałe definicje:
+
+- profit_only – zysk/strata pojedynczego deala (zamkniętej transakcji) w ramach danej session_id:
+  w kodzie HistoryDealGetDouble(deal_ticket, DEAL_PROFIT).
+
+- max_session_equity_drawdown – najgorszy equity drawdown w PLN w trakcie sesji:
+  minimalna wartość (equity_t - g_session_start_equity) po starcie sesji; zwykle wartość ujemna
+  (np. -9063,89).
+
+- max_session_profit – łączny wynik sesji w PLN:
+  suma wszystkich profit_only w ramach danej session_id, w kodzie g_session_profit_pos + g_session_profit_neg.
+
+- max_session_equity_burned_percent – maksymalny procent „zjedzonego” equity w sesji względem balance na starcie sesji:
+  [ max_session_equity_burned_percent = \frac{|max_session_equity_drawdown|}{g_session_start_balance} \times 100% ]
+  W kodzie: session_burned = (MathAbs(g_session_max_dd) / g_session_start_balance) * 100.0;.
+  To jest jedyne źródło wartości % w notyfikacji końca sesji.
+
+- max_margin_burned – maksymalny procent zajętego marginu (margin used %) w trakcie sesji:
+  maksimum z wartości margin_used = (margin / equity) * 100.0 liczonych w UpdateSessionMetrics()
+  w ramach danej session_id.
+  W CSV i raportach ta kolumna oznacza „najwyższe zajęcie marginu w sesji”, a NIE equity-burned.
+
+===============================================================================
+
+## 11) Rozdzielenie plików global vs per‑konto (nietykalne definicje)
+
+### 20. Rozdzielenie plików global vs per‑konto
+Jeśli prosisz o dodanie nowych kolumn tylko dla per‑konto raportów (np. minut sesji),
+ja nie mogę tego robić w globalnym DailySessionSummary.csv, chyba że napiszesz wprost
+„zmień definicję globalnego pliku”. Domyślnie zmiany idą wyłącznie w
+DailySessionSummary<konto>.csv lub w nowy plik o nowej nazwie.
+
+Zmiany dla DailySessionSummary.csv robisz tylko w EnsureHeaderDailyGlobal().
+Zmiany dla per‑konto raportów w EnsureHeaderDaily().
+
+Nietykalność ustalonych definicji plików:
+Jeżeli wcześniej została ustalona definicja pliku (np. liczba wierszy per sesja / per transakcja
+i lista kolumn), AI nie może jej zmieniać ani reinterpretować, chyba że ja wyraźnie poproszę o zmianę definicji.
+
+Każda propozycja zmiany musi zaczynać się od zdania:
+- „Ta zmiana nie zmienia definicji pliku X” albo
+- „Ta zmiana zmienia definicję pliku X w następujący sposób: …”.
+
+max_daily_profit w deals – w obecnym kodzie to jest to samo pole, co w globalnym summary:
+maksymalny dodatni session_net spośród wszystkich sesji w danym dniu (czyli „najlepsza sesja dnia”).
+Nie ma sensu powtarzać tego co w jednym wierszu globalnego pliku, więc wywalamy z per‑deal.
+
+===============================================================================
+
+## 12) Notyfikacja końca sesji (NotifySessionEnd) – format CORE
+
+### 21. NotifySessionEnd – format NIEZMIENNY
+Notyfikacja końca sesji (NotifySessionEnd) ma ZAWSZE mieć format:
+session end <session_id> dla <konto> o <minute_session_end> | max_lot=<max_total_lot> | max_dd=<max_session_equity_drawdown> | max_session_equity_burned_percent=<%DD> | max_session_profit=<profit>
+
+Gdzie:
+- max_total_lot = g_session_max_total_lot (najwyższe łączne loty w sesji, format LotStr z przecinkiem).
+- max_session_equity_drawdown = g_session_max_dd (najgorszy DD equity w PLN, dwie cyfry po przecinku).
+- max_session_equity_burned_percent = (|g_session_max_dd| / g_session_start_balance) * 100 (procentowo, dwie cyfry po przecinku).
+- max_session_profit = g_session_profit_pos + g_session_profit_neg (suma profitów sesji w PLN).
+
+W tej notyfikacji NIE wolno podmieniać pól na min_margin, margin_used ani inne wartości bez mojej pisemnej zgody.
+
+===============================================================================
+
+## 13) Komentarze i autoweryfikacja po kompilacji
+
+### 22. Nieusuwanie istniejących komentarzy
+Przy każdej modyfikacji kodu AI nie usuwa istniejących komentarzy, chyba że ja
+wyraźnie o to poproszę (np. „wyczyść stare komentarze w tej funkcji”). Nowe komentarze
+mogą być dokładane nad/pod istniejącymi, ale stare komentarze pozostają w kodzie,
+aby zachować pełny kontekst historyczny i wcześniejsze wyjaśnienia.
+
+### 23. Autoweryfikacja po kompilacji
+„Po każdej informacji ode mnie skompilowałem EA AI ma obowiązek automatycznie sprawdzić aktualny kod i najnowsze pliki CSV/logi MT5 pod kątem zgodności z ostatnio uzgodnionymi zmianami.”
+
+===============================================================================
+
+## 14) AccountAgeReport.csv – zasady + finalna specyfikacja (CORE)
+
+### 24. AccountAgeReport.csv – zasady
+Definicja pliku:
+- „AccountAgeReport.csv – 1 wiersz = 1 okres życia konta (od resetu do FAIL/stop‑out/equity < 1000 PLN).”
+- „Wiersze w tym pliku nigdy nie są usuwane, mogą być jedynie nadpisywane w ramach tego samego okresu (klucz: konto + account_start_date).”
+
+Klucz i niezmienność wierszy:
+- „Klucz okresu: konto + account_start_date (czas resetu). Ten klucz jest niezmienny w czasie – reset tego samego konta tworzy nowy wiersz z nową datą startu.”
+- „Po osiągnięciu g_day_failed == true dla danego okresu wiersz staje się historyczny – nie wolno go już modyfikować.”
+
+Schemat i stałość nagłówka:
+- „Schemat AccountAgeReport.csv jest nietykalny bez mojej wyraźnej zgody – nie wolno zmieniać kolejności kolumn, nazw ani liczby kolumn.”
+
+Źródło danych i próg FAIL:
+- „Triggerem końca życia konta jest g_day_failed == true, ustawiane gdy equity < 1000 lub balance < 1000 (i/lub stop‑out wg margin level / DEAL_REASON_STOPOUT).”
+- „Wszystkie agregaty (PF, DD, total_trades, win_rate, durations, max_equity_history, most_traded_symbol, total_sessions) są liczone poziomie okresu życia konta, nie pojedynczej sesji.”
+
+Zasada nie‑regresji istniejących raportów:
+- „Implementacja i zmiany związane z AccountAgeReport.csv nie mogą zmieniać definicji ani schematu istniejących plików: DailySessionSummary.csv, DailySessionDeals_<konto>.csv, SessionDD_Thresholds.csv. Jeśli zmiana wymagałaby ingerencji w któryś z tych plików – musi to być osobno opisane i uzgodnione.”
+
+Checklista impactu (doprecyzowanie):
+Przy każdej zmianie dotyczącej AccountAgeReport AI musi w podsumowaniu dopisać:
+- czy dotknięty został schemat AccountAgeReport.csv (tak/nie, jak),
+- czy zmiana może w jakikolwiek sposób wpłynąć na generowanie 4 istniejących raportów,
+- czy wiersze historyczne (zakończone okresy) pozostają w 100% kompatybilne.
+
+Definicja AccountAgeReport.csv – finalna specyfikacja
+Plik: AccountAgeReport.csv
+Separator: ;
+Pierwsza linia: sep=;
+
+1) Schemat (nagłówek – 23 kolumny, niezmienny) – kolejność kolumn:
+- konto – login MT5
+- account_start_date – data/czas resetu (PL, minuty)
+- account_end_date – data/czas końca życia konta (PL, minuty)
+- session_id – ID sesji, w której nastąpił koniec życia konta
+- account_start_balance – saldo na starcie okresu życia (po resecie)
+- account_end_balance – saldo na końcu życia konta
+- max_equity_history – maksymalne equity w całym okresie życia konta
+- max_drawdown_pln – maksymalny obsunięcie kapitału w PLN (w całym okresie, liczony na equity)
+- total_lot_current_max – maksymalny łączny lot (total lots) w całym okresie życia konta
+- account_age_days – liczba dni od account_start_date do account_end_date (pełne dni)
+- active_trading_days – liczba dni kalendarzowych, w których były transakcje w tym okresie
+- total_net_profit – wynik netto okresu: account_end_balance - account_start_balance
+- max_drawdown_percent – maksymalny drawdown w %, odniesiony do account_start_balance
+- profit_factor – sum_profit / sum_loss (z okresu życia konta; brak strat → 999.99 lub 0)
+- total_trades – liczba wszystkich transakcji zamkniętych w okresie
+- win_rate_percent – 100 * win_trades / total_trades
+- avg_trade_profit – total_net_profit / total_trades (0, jeśli brak transakcji)
+- max_consecutive_wins – maksymalna seria transakcji z zyskiem
+- max_consecutive_losses – maksymalna seria transakcji ze stratą
+- avg_trade_duration_min – średni czas trwania transakcji w minutach (z okresu)
+- most_traded_symbol – symbol z największą liczbą transakcji w okresie
+- market_session_failure – sesja rynkowa, w której nastąpił koniec życia konta (np. Tokyo, London, NY, Overlap)
+- total_sessions – liczba zakończonych sesji (SessionID) w tym okresie życia konta
+
+2) Kiedy powstaje NOWY wiersz (początek życia konta)
+Nowy wiersz powstaje wyłącznie przy resecie konta (wykrytym w HandleBalanceReset).
+Do pliku trafia tylko konto, które miało fizycznie wykonany reset – w OnInit nie tworzy się wiersza.
+
+3) Kiedy wiersz jest AKTYWNY i jak jest aktualizowany
+Wiersz jest aktywny od momentu resetu aż do końca życia konta (g_account_age_reported == false).
+Źródło aktualizacji: każda zakończona sesja (EndSessionFinalize), gdy open_cnt = 0 i sesja się finalizuje.
+
+4) Kiedy wiersz KOŃCZY życie (staje się historyczny)
+Warunek: g_day_failed == true oraz EndSessionFinalize dla sesji (open_cnt = 0).
+Najpierw UpsertAccountAgeRow() (ostatnia aktualizacja), zaraz potem g_account_age_reported = true.
+Od tego momentu wiersz jest historyczny i nie może być modyfikowany; kolejny reset tworzy nowy wiersz.
+
+===============================================================================
+
+## 15) Dokumentacja funkcjonalności / raportów
+
+### 25. Zasada dokumentacji funkcjonalności / raportów
+Dla każdego nowego raportu CSV (np. AccountAgeReport.csv, NowyRaportX.csv) oraz
+każdej większej funkcjonalności, AI musi utworzyć plik dokumentacji w katalogu EA:
+- NazwaFunkcjonalnosci_VERIFICATION.md
+  (np. docs/AccountAgeReport_VERIFICATION.md)
+
+Taki plik musi zawierać co najmniej:
+- pełną definicję raportu (nagłówek CSV, lista kolumn, kolejność, typy),
+- opis, kiedy powstaje nowy wiersz, kiedy wiersz jest aktualizowany, kiedy kończy życie,
+- źródła danych (które zmienne globalne, które pliki CSV),
+- checklistę „impactu”:
+  - czy zmieniane są istniejące pliki CSV (jakie, w jaki sposób),
+  - czy istniejące dane są kompatybilne,
+  - czy mogą wystąpić regresje dla już działających raportów,
+  - jakie dodatkowe logi/diagnostyka zostały dodane.
+
+AI nie może wprowadzać nowych raportów ani większych funkcjonalności bez takiego pliku —
+najpierw powstaje dokument _VERIFICATION.md, dopiero potem zmiany w .mq5.
+
+Lokalizacja dokumentów:
+- Wszystkie pliki *_VERIFICATION.md trzymamy w tym samym katalogu co DailySessionLogger_v2.mq5,
+  bez podkatalogów.
+
+Aktualizacja dokumentu przy zmianach:
+- Jeżeli później zmieniamy istniejący raport / funkcjonalność, AI musi:
+  - zaktualizować odpowiedni *_VERIFICATION.md,
+  - w podsumowaniu jasno napisać, które punkty dokumentu zostały zmienione.
+PRE-CONDITIONS / ZASADY OGÓLNE (do każdorazowej pracy z kodem MT5 / CSV)
+
+Cel: ten plik opisuje twarde zasady pracy AI z projektem.
+Uwaga: poniżej jest format „czytelny do skanowania” — znaczenie reguł pozostaje
+bez zmian.
+
+===============================================================================
+
+## 1) Analiza wejścia: obowiązkowa analiza wszystkich załączników
+
+### 1. Obowiązek analizy każdego załączonego pliku
+Sam fakt załączenia pliku (kodu źródłowego, dokumentu, CSV, zrzutu ekranu itp.)
+przez użytkownika jest jednoznaczną intencją, że plik ten ma zostać
+przeanalizowany i wzięty pod uwagę przy odpowiedzi.
+
+AI nie wymaga dodatkowego polecenia typu "przeanalizuj ten plik". Dotyczy to w
+szczególności:
+- kodów MT5 (które dodatkowo muszą być kompilowane zgodnie z pkt 10),
+- plików z zasadami (jak ten),
+- logów, zrzutów błędów,
+- przykładowych danych CSV.
+
+Jeśli z jakiegoś powodu plik ma zostać zignorowany (np. jest załączony tylko jako
+kontekst historyczny), użytkownik wyraźnie to zaznaczy w treści.
+
+### 1b. Samodzielne przeglądanie kodu/logów/CSV (bez proszenia o ponowne załączniki)
+Podczas analizy zapytań lub błędów, które użytkownik wysyła na bieżąco, AI ma
+obowiązek samodzielnie korzystać z dostępu do:
+- folderu z `DailySessionLogger_v2.mq5`,
+- logów MT5,
+- generowanych plików CSV.
+
+### 1c. Obowiązek zgłaszania zauważonych problemów, nawet jeśli użytkownik o nich nie napisał
+Jeżeli podczas review kodu/logów/CSV AI zauważy błędy lub nieoptymalności, ma
+obowiązek je zgłosić. Przykłady:
+- CSV zapisuje się w niepoprawnym formacie i „rozjeżdża” kolumny,
+- pola (np. profit/lot) trafiają w złe kolumny (np. wyglądają jak data),
+- pojawia się jeden długi string z `;` bez rozbicia na kolumny w Excelu.
+
+### 1d. Dostęp do logów i plików CSV przy analizie problemów
+W projekcie utworzono dowiązania symboliczne (junction) do folderów:
+- `data` → zawiera pliki CSV generowane przez EA
+  (np. DAILY_ACCOUNTSDETAILS.csv, DailySessionSummary.csv,
+  SessionDD_Thresholds.csv, DailySessionDeals*.csv)
+- `logs` → zawiera logi MT5 (pliki `.log`)
+
+Przy każdej analizie problemu, błędów lub zapytań dotyczących danych sesji, AI ma
+obowiązek:
+- sprawdzić zawartość folderów `data` i `logs`,
+- odnieść się do najnowszych plików (np. z dzisiejszą datą) w celu diagnozy,
+- jeśli pliki są niekompletne lub brakuje ich — poinformować użytkownika.
+
+AI może również prosić użytkownika o wskazanie konkretnego pliku do analizy,
+jeśli to konieczne.
+
+===============================================================================
+
+## 2) Zasady modyfikacji kodu: komentarze i kontekst zmian
+
+### 2. Obowiązek dodawania opisowych komentarzy w kodzie
+Przy każdej modyfikacji kodu AI ma obowiązek opatrywać poszczególne bloki
+logiczne krótkimi komentarzami wyjaśniającymi, co się w nich dzieje (np.:
+// Sprawdź, czy plik istnieje, // Utwórz nowy plik, // Zapisz nagłówek).
+
+Komentarze mają być zwięzłe, ale opisowe — ich celem jest ułatwienie zrozumienia
+intencji i przepływu logiki. Dotyczy to zarówno nowego kodu, jak i zmian w
+istniejącym.
+
+### 7. Każda sugerowana zmiana musi mieć kontekst w obecnym kodzie
+AI nie może sugerować zmian „bez osadzenia” (np. sama linia do podmiany).
+Wymagany format odpowiedzi:
+- (1) Kontekst — istniejący fragment kodu
+- (2) Proponowana wersja po zmianie — pełny blok pod spodem
+
+===============================================================================
+
+## 3) Zasady podsumowań i ryzyk
+
+### 3. W podsumowaniu zawsze: wpływ na usuwanie plików DAILY lub SessionDD
+AI zawsze pisze w podsumowaniu, czy zmiany wymagają usunięcia plików DAILY lub
+SessionDD.
+
+### 4. W podsumowaniu zawsze: możliwe regresje innych funkcjonalności
+AI zawsze pisze w podsumowaniu, jak zmiany mogą spowodować regresję innych
+funkcjonalności.
+
+### 5. Nie zmieniaj podstawowej (core’owej) logiki bez potrzeby
+Zmiana, którą AI proponuje, nie może zmieniać podstawowej (corowej) logiki kodu.
+
+### 6. Nie wracaj do rzeczy już zaimplementowanych, jeśli użytkownik o to nie pyta
+Jeśli użytkownik nie pyta o poprzednie rzeczy, oznacza to, że zostały przez niego
+zaimplementowane. AI nie wraca do nich ponownie w nowych komentarzach z
+wyjaśnieniami/przypomnieniami.
+
+### 9. W podsumowaniu zawsze: propozycja rozszerzenia warstwy logowania
+AI ma każdorazowo w podsumowaniu proponować, czy rozszerzyć warstwę logowania,
+aby uniknąć podobnych problemów w przyszłości.
+
+===============================================================================
+
+## 4) Schematy danych / CSV: obowiązkowa kontrola
+
+### 8. Schemat: twarde odniesienie do nagłówka i kolumn
+AI zawsze pisze zmiany w bazie/tabeli (tu: CSV) jaki jest schemat. Cokolwiek
+zmieniasz na schemacie lub funkcjach/nowych funkcjach, musisz odnosić do schematu
+czy schemat na dany nagłówek, aby nie doprowadzić do rozjechania się kolumn /
+nagłówków w generowanych plikach CSV.
+
+### 12. Checklist „impactu” w podsumowaniu
+„W każdym podsumowaniu zmian AI stosuje mini‑checklistę z pkt 13 (4 pytania).”
+
+### 13. Twarda kontrola schematu przy każdej zmianie
+Przy każdej zmianie dotyczącej logowania do CSV AI ma obowiązek:
+- wypisać pełny nagłówek (lista kolumn, kolejność) dla każdego dotkniętego pliku,
+- napisać:
+  - czy nagłówek się zmienia,
+  - czy liczba kolumn się zmienia,
+  - jak wygląda przykładowy wiersz po zmianie,
+- wskazać, czy istniejące dane w tym pliku będą:
+  kompatybilne / częściowo kompatybilne / niekompatybilne (wtedy musi zaproponować
+  nowy plik zgodnie z zasadą „nowy schemat = nowy plik”, jeśli obowiązuje).
+
+W każdym podsumowaniu zmian AI musi odpowiedzieć na 4 pytania:
+- Czy zmiana dotyka schematu jakiegoś pliku CSV? Jeśli tak, którego i jak.
+- Czy zmiana wymaga usunięcia / zarchiwizowania / zignorowania istniejących plików?
+- Jakie są potencjalne regresje — konkretne funkcje lub raporty.
+- Czy sugerowane jest rozszerzenie warstwy logowania (np. version tag, DEBUG).
+
+===============================================================================
+
+## 5) Kompilacja i higiena zmian (MQL5)
+
+### 10. Obowiązek kompilacji przed proponowaniem zmian
+Ilekroć dostajesz ode mnie kod z MT5 w ramach zmian, AI ma obowiązek wykonać
+kompilację w swoim środowisku pamięci podręcznej, aby upewnić się, że to co
+proponuje zadziała (np. nie brakuje globala, MT5 obsługuje użyte funkcje).
+
+Po naszej poprawce z błędem kompilacji ustaliliśmy, że przy każdej propozycji zmian
+AI podwójnie sprawdza:
+- kompletność klamr `{}` / `}` w całym bloku,
+- że kod pozostaje wewnątrz funkcji i nie „wycieka” na poziom globalny.
+
+===============================================================================
+
+## 6) Zasada ciągłości pliku per konto (CORE)
+
+### 11. Zasada ciągłości pliku per konto
+Obecne zachowanie:
+- Jeśli DailySessionDeals<konto>.csv istnieje, EnsureHeaderDailyDealsPerAccount(perfile)
+  tylko sprawdza istnienie i niczego nie resetuje — dopisujesz kolejne deale,
+  zachowując historię wszystkich dni.
+- Jeśli plik zostanie ręcznie skasowany, przy pierwszym wywołaniu
+  EnsureHeaderDailyDealsPerAccount(perfile) utworzy się nowy plik; od tego momentu
+  logujesz od pierwszej najbliższej transakcji (czyli „od zera” w sensie nowego pliku,
+  ale tylko dla kolejnych dni/tego dnia).
+
+Tego nie ruszamy — jest zgodne z Twoją ZASADĄ.
+
+===============================================================================
+
+## 7) Definicje plików CSV i schematy (NIEZMIENNE bez zgody)
+
+### 14. Definicje plików CSV i schematy (NIEZMIENNE bez mojej zgody)
+W tym projekcie generowane są 4 główne pliki CSV. Dla każdego pliku obowiązują
+jednocześnie:
+- definicja „co oznacza jeden wiersz”,
+- pełny schemat nagłówka (lista kolumn, kolejność),
+- znaczenie każdej kolumny.
+
+Każda propozycja zmiany któregokolwiek z tych schematów (dodanie/usunięcie/
+przestawienie kolumn, zmiana znaczenia pola) musi być osobno przeze mnie
+zatwierdzona i wyraźnie opisana w podsumowaniu przez AI.
+
+-------------------------------------------------------------------------------
+
+### 14.1 DailySessionSummary.csv – globalne podsumowanie sesji
+- 1 wiersz = 1 sesja (session_id) na danym koncie.
+- Każdy wiersz to podsumowanie TOTALS dla jednej sesji (profit, DD, loty, margin)
+  w danym dniu.
+
+Nagłówek (po dodaniu nowej kolumny):
+date;konto;session_id;start_balance;end_balance;max_session_equity_drawdown;max_session_profit;max_single_lot;max_total_lot;max_margin_burned;max_session_equity_burned_percent;account_reset;minute_session_start;minute_session_end
+
+Definicje kolumn:
+- date – data dnia (g_day_start).
+- konto – login MT5.
+- session_id – identyfikator sesji.
+- start_balance – balance na starcie sesji.
+- end_balance – balance na końcu sesji.
+- max_session_equity_drawdown – najgorszy equity DD w PLN w tej sesji (wartość ujemna lub 0).
+- max_session_profit – łączny wynik sesji w PLN (suma profit_only dla danego session_id).
+- max_single_lot – maksymalny pojedynczy wolumen pozycji w sesji.
+- max_total_lot – maksymalna łączna wielkość pozycji w sesji.
+- max_margin_burned – max margin used % w sesji (maksimum z (margin / equity) * 100 w trakcie sesji).
+- max_session_equity_burned_percent – max equity burned % w sesji: (|max_session_equity_drawdown| / start_balance * 100).
+- account_reset – status dnia/sesji: FAILED, RESET lub pusty.
+- minute_session_start – minuta startu sesji (lokalnie).
+- minute_session_end – minuta końca sesji (lokalnie).
+
+-------------------------------------------------------------------------------
+
+### 14.2 DailySessionDeals<konto>.csv – log per konto, per transakcja
+- Nazwa: DailySessionDeals<login>.csv.
+- 1 wiersz = 1 zamknięty deal (transakcja) w ramach danej sesji (session_id).
+- Wiele wierszy z tym samym session_id opisuje wszystkie transakcje danej sesji na tym koncie.
+
+Nagłówek (18 kolumn):
+date;konto;session_id;deal_time;deal_ticket;symbol;direction;volume;price;profit_only;max_session_equity_drawdown;max_session_profit;max_total_lot;max_margin_burned;max_session_equity_burned_percent;account_reset;minute_session_start;minute_session_end
+
+Definicje kolumn:
+- date – data dnia (g_day_start).
+- konto – login MT5.
+- session_id – identyfikator sesji.
+- deal_time – czas zamknięcia deala (lokalny, zaokrąglony do minuty).
+- deal_ticket – ticket MT5.
+- symbol – instrument (np. BTCUSD).
+- direction – buy / sell.
+- volume – wolumen pozycji w lotach (LotStr).
+- price – cena zamknięcia deala.
+- profit_only – zysk/strata tej jednej transakcji (DEAL_PROFIT, bez swapów/komisji jeśli tak zdefiniowane).
+- max_session_equity_drawdown – najgorszy equity DD w PLN w tej sesji (stały dla wszystkich wierszy danego session_id).
+- max_session_profit – łączny wynik sesji w PLN (suma profit_only dla danego session_id).
+- max_total_lot – maksymalna łączna wielkość pozycji w sesji.
+- max_margin_burned – max margin used % w sesji (maksimum z (margin / equity) * 100 w trakcie sesji).
+- max_session_equity_burned_percent – max equity burned % w sesji: (|max_session_equity_drawdown| / start_balance * 100).
+- account_reset – FAILED / RESET / pusty.
+- minute_session_start – minuta startu sesji (lokalnie).
+- minute_session_end – minuta końca sesji (lokalnie).
+
+-------------------------------------------------------------------------------
+
+### 14.3 SessionDD_Thresholds.csv – log progów DD w sesjach
+- 1 wiersz = jedno przekroczenie konkretnego poziomu DD/threshold w danej sesji.
+- Plik opisuje historię „schodzenia w dół” po progach DD (np. -1000, -2000 itd.) z
+  dodatkowymi informacjami o equity, marginie i lotach.
+
+Nagłówek (18 kolumn – NIEZMIENNY):
+date;konto;session_id;minute_reached;threshold;session_max_dd_so_far;margin_burned;equity_at_time;session_start_balance;session_end_balance;single_lot_current_max;total_lot_current_max;minute_session_start;minute_session_end;total_session_profit;total_session_loss;margin_call;account_closed_stop_out
+
+Definicje kolumn:
+- date – data dnia.
+- konto – login MT5.
+- session_id – identyfikator sesji.
+- minute_reached – minuta, w której osiągnięto dany próg DD.
+- threshold – wartość progu DD (np. -1000, -2000).
+- session_max_dd_so_far – maksymalny DD w PLN do tego momentu sesji.
+- margin_burned – wartość procentowa zgodna z logiką tego pliku (zużycie/burned względem startu w chwili progu).
+- equity_at_time – equity w momencie osiągnięcia progu.
+- session_start_balance – balance na starcie sesji.
+- session_end_balance – balance na końcu sesji (dla tej sesji).
+- single_lot_current_max – maksymalny pojedynczy wolumen pozycji do tego momentu sesji.
+- total_lot_current_max – maksymalny łączny wolumen pozycji do tego momentu sesji.
+- minute_session_start – minuta startu sesji.
+- minute_session_end – minuta końca sesji.
+- total_session_profit – całkowity wynik sesji (profit) w momencie logu progu.
+- total_session_loss – całkowita suma strat sesji w momencie logu progu.
+- margin_call – flaga (0/1 lub false/true), czy wystąpił margin call.
+- account_closed_stop_out – flaga, czy konto zostało zamknięte przez stop out.
+
+-------------------------------------------------------------------------------
+
+### 14.4 AccountDetails.csv (jeśli używany) – snapshot parametrów konta
+- 1 wiersz = jeden snapshot parametrów konta (np. start dnia, reset, zmiana ustawień).
+
+Przykładowy nagłówek (dopasować do realnego pliku):
+date;konto;broker;currency;leverage;start_balance;equity;margin_free;comment
+
+Definicje kolumn (do doprecyzowania po pokazaniu pliku):
+- date – data snapshotu.
+- konto – login MT5.
+- broker – nazwa brokera/serwera.
+- currency – waluta konta.
+- leverage – dźwignia.
+- start_balance – balance na moment snapshotu.
+- equity – equity na moment snapshotu.
+- margin_free – wolny margin na moment snapshotu.
+- comment – komentarz (np. „reset balansu”, „zmiana brokera” itp.).
+
+-------------------------------------------------------------------------------
+
+Zasada ogólna:
+Powyższe schematy (lista kolumn, ich kolejność i znaczenie) są NIEZMIENNE bez
+mojej wyraźnej zgody.
+
+AI ma przy każdej propozycji zmiany logiki CSV:
+- wypisać pełny nagłówek,
+- napisać, czy nagłówek i liczba kolumn się zmienia,
+- podać przykładowy wiersz po zmianie,
+- określić kompatybilność istniejących danych (kompatybilne / częściowo / niekompatybilne).
+
+===============================================================================
+
+## 8) Core i side-effecty: zasady bezpieczeństwa
+
+### 15. Nie dotykaj działającego core’a bez potrzeby
+AI nie może modyfikować funkcji oznaczonych przez mnie jako kluczowe (np.
+AppendDailyFinalRow, LogThreshold, UpsertDailyRowPerAccount, EndSessionFinalize),
+chyba że:
+- ja wyraźnie poproszę o zmianę tej funkcji, lub
+- AI w podsumowaniu jasno wykaże, że bez zmiany nie da się zrealizować mojego celu.
+
+W takim wypadku AI musi:
+- opisać „przed/po” – co dokładnie zmienia się w logice funkcji,
+- wskazać potencjalny wpływ na inne funkcjonalności (np. zamykanie sesji,
+  powiadomienia, liczenie DD).
+
+### 16. Jedno źródło prawdy dla powiadomień / side‑effectów
+Jeżeli jakaś funkcja odpowiada za „widoczny efekt zewnętrzny” (np. NotifySessionEnd,
+wysyłanie alertów, zapis końca sesji), AI nie może duplikować tego efektu w kilku
+miejscach.
+
+AI ma:
+- wskazać jedno miejsce (funkcję), która będzie odpowiedzialna za dany efekt,
+- w podsumowaniu napisać wprost:
+  „Od teraz tylko funkcja X wywołuje NotifySessionEnd; wszystkie inne wywołania usuwamy”.
+
+To jest reakcja na chwilowe dublowanie NotifySessionEnd w UpsertDailyRowPerAccount
+i EndSessionFinalize.
+
+### 17. Rozszerzaj logowanie przy potencjalnych błędach
+Wszystkie potencjalne błędy/zmiany, które wymagałyby dodania do warstwy logowania,
+muszą być proponowane na bieżąco aby w przyszłości uniknąć takich samych błędów
+i problemów z diagnozą. Ew. testy diagnostyczne jeśli potrzeba.
+
+===============================================================================
+
+## 9) Konwencje nazewnictwa (nietykalne)
+
+### 18. Zasada nazewnictwa
+W tym projekcie trzymamy się zawsze dokładnie nazw z pliku – czyli z podkreśleniami:
+g_login, g_day_start, g_session_start_time, g_session_max_dd, g_session_max_total_lot,
+g_day_max_margin_burned itd.
+
+Jeśli podaję Ci fragment funkcji, nie wolno mi zmieniać stylu (np. na glogin, gdaystart),
+tylko używam dokładnie tych identycznych identyfikatorów.
+
+Jeżeli kiedyś będziemy robić refactor nazw, to robimy to globalnie: najpierw pokazuję
+pełny diff „stare → nowe”, a dopiero potem zmieniam wszystkie wystąpienia w całym
+pliku, nigdy mieszanki dwóch stylów.
+
+===============================================================================
+
+## 10) DEFINICJE (sesja tradingowa i pola metryk)
+
+### 19. Sesja tradingowa – definicja
+- Sesja startuje, gdy liczba otwartych pozycji przechodzi z 0 → >0
+- Sesja kończy się, gdy wraca do 0 i wszystkie zamknięcia były w tej samej minucie
+  (my uznajemy “minutę zamknięcia sesji” = minuta, w której konto stało się FLAT)
+
+### 19b. Definicje pól sesyjnych DD / zysku (NIEZMIENNE)
+Dla wszystkich logów sesyjnych (notyfikacje, DailySessionDeals<konto>.csv,
+DailySessionSummary.csv) obowiązują stałe definicje:
+
+- profit_only – zysk/strata pojedynczego deala (zamkniętej transakcji) w ramach danej session_id:
+  w kodzie HistoryDealGetDouble(deal_ticket, DEAL_PROFIT).
+
+- max_session_equity_drawdown – najgorszy equity drawdown w PLN w trakcie sesji:
+  minimalna wartość (equity_t - g_session_start_equity) po starcie sesji; zwykle wartość ujemna
+  (np. -9063,89).
+
+- max_session_profit – łączny wynik sesji w PLN:
+  suma wszystkich profit_only w ramach danej session_id, w kodzie g_session_profit_pos + g_session_profit_neg.
+
+- max_session_equity_burned_percent – maksymalny procent „zjedzonego” equity w sesji względem balance na starcie sesji:
+  [ max_session_equity_burned_percent = \frac{|max_session_equity_drawdown|}{g_session_start_balance} \times 100% ]
+  W kodzie: session_burned = (MathAbs(g_session_max_dd) / g_session_start_balance) * 100.0;.
+  To jest jedyne źródło wartości % w notyfikacji końca sesji.
+
+- max_margin_burned – maksymalny procent zajętego marginu (margin used %) w trakcie sesji:
+  maksimum z wartości margin_used = (margin / equity) * 100.0 liczonych w UpdateSessionMetrics()
+  w ramach danej session_id.
+  W CSV i raportach ta kolumna oznacza „najwyższe zajęcie marginu w sesji”, a NIE equity-burned.
+
+===============================================================================
+
+## 11) Rozdzielenie plików global vs per‑konto (nietykalne definicje)
+
+### 20. Rozdzielenie plików global vs per‑konto
+Jeśli prosisz o dodanie nowych kolumn tylko dla per‑konto raportów (np. minut sesji),
+ja nie mogę tego robić w globalnym DailySessionSummary.csv, chyba że napiszesz wprost
+„zmień definicję globalnego pliku”. Domyślnie zmiany idą wyłącznie w
+DailySessionSummary<konto>.csv lub w nowy plik o nowej nazwie.
+
+Zmiany dla DailySessionSummary.csv robisz tylko w EnsureHeaderDailyGlobal().
+Zmiany dla per‑konto raportów w EnsureHeaderDaily().
+
+Nietykalność ustalonych definicji plików:
+Jeżeli wcześniej została ustalona definicja pliku (np. liczba wierszy per sesja / per transakcja
+i lista kolumn), AI nie może jej zmieniać ani reinterpretować, chyba że ja wyraźnie poproszę o zmianę definicji.
+
+Każda propozycja zmiany musi zaczynać się od zdania:
+- „Ta zmiana nie zmienia definicji pliku X” albo
+- „Ta zmiana zmienia definicję pliku X w następujący sposób: …”.
+
+max_daily_profit w deals – w obecnym kodzie to jest to samo pole, co w globalnym summary:
+maksymalny dodatni session_net spośród wszystkich sesji w danym dniu (czyli „najlepsza sesja dnia”).
+Nie ma sensu powtarzać tego co w jednym wierszu globalnego pliku, więc wywalamy z per‑deal.
+
+===============================================================================
+
+## 12) Notyfikacja końca sesji (NotifySessionEnd) – format CORE
+
+### 21. NotifySessionEnd – format NIEZMIENNY
+Notyfikacja końca sesji (NotifySessionEnd) ma ZAWSZE mieć format:
+session end <session_id> dla <konto> o <minute_session_end> | max_lot=<max_total_lot> | max_dd=<max_session_equity_drawdown> | max_session_equity_burned_percent=<%DD> | max_session_profit=<profit>
+
+Gdzie:
+- max_total_lot = g_session_max_total_lot (najwyższe łączne loty w sesji, format LotStr z przecinkiem).
+- max_session_equity_drawdown = g_session_max_dd (najgorszy DD equity w PLN, dwie cyfry po przecinku).
+- max_session_equity_burned_percent = (|g_session_max_dd| / g_session_start_balance) * 100 (procentowo, dwie cyfry po przecinku).
+- max_session_profit = g_session_profit_pos + g_session_profit_neg (suma profitów sesji w PLN).
+
+W tej notyfikacji NIE wolno podmieniać pól na min_margin, margin_used ani inne wartości bez mojej pisemnej zgody.
+
+===============================================================================
+
+## 13) Komentarze i autoweryfikacja po kompilacji
+
+### 22. Nieusuwanie istniejących komentarzy
+Przy każdej modyfikacji kodu AI nie usuwa istniejących komentarzy, chyba że ja
+wyraźnie o to poproszę (np. „wyczyść stare komentarze w tej funkcji”). Nowe komentarze
+mogą być dokładane nad/pod istniejącymi, ale stare komentarze pozostają w kodzie,
+aby zachować pełny kontekst historyczny i wcześniejsze wyjaśnienia.
+
+### 23. Autoweryfikacja po kompilacji
+„Po każdej informacji ode mnie skompilowałem EA AI ma obowiązek automatycznie sprawdzić aktualny kod i najnowsze pliki CSV/logi MT5 pod kątem zgodności z ostatnio uzgodnionymi zmianami.”
+
+===============================================================================
+
+## 14) AccountAgeReport.csv – zasady + finalna specyfikacja (CORE)
+
+### 24. AccountAgeReport.csv – zasady
+Definicja pliku:
+- „AccountAgeReport.csv – 1 wiersz = 1 okres życia konta (od resetu do FAIL/stop‑out/equity < 1000 PLN).”
+- „Wiersze w tym pliku nigdy nie są usuwane, mogą być jedynie nadpisywane w ramach tego samego okresu (klucz: konto + account_start_date).”
+
+Klucz i niezmienność wierszy:
+- „Klucz okresu: konto + account_start_date (czas resetu). Ten klucz jest niezmienny w czasie – reset tego samego konta tworzy nowy wiersz z nową datą startu.”
+- „Po osiągnięciu g_day_failed == true dla danego okresu wiersz staje się historyczny – nie wolno go już modyfikować.”
+
+Schemat i stałość nagłówka:
+- „Schemat AccountAgeReport.csv jest nietykalny bez mojej wyraźnej zgody – nie wolno zmieniać kolejności kolumn, nazw ani liczby kolumn.”
+
+Źródło danych i próg FAIL:
+- „Triggerem końca życia konta jest g_day_failed == true, ustawiane gdy equity < 1000 lub balance < 1000 (i/lub stop‑out wg margin level / DEAL_REASON_STOPOUT).”
+- „Wszystkie agregaty (PF, DD, total_trades, win_rate, durations, max_equity_history, most_traded_symbol, total_sessions) są liczone poziomie okresu życia konta, nie pojedynczej sesji.”
+
+Zasada nie‑regresji istniejących raportów:
+- „Implementacja i zmiany związane z AccountAgeReport.csv nie mogą zmieniać definicji ani schematu istniejących plików: DailySessionSummary.csv, DailySessionDeals_<konto>.csv, SessionDD_Thresholds.csv. Jeśli zmiana wymagałaby ingerencji w któryś z tych plików – musi to być osobno opisane i uzgodnione.”
+
+Checklista impactu (doprecyzowanie):
+Przy każdej zmianie dotyczącej AccountAgeReport AI musi w podsumowaniu dopisać:
+- czy dotknięty został schemat AccountAgeReport.csv (tak/nie, jak),
+- czy zmiana może w jakikolwiek sposób wpłynąć na generowanie 4 istniejących raportów,
+- czy wiersze historyczne (zakończone okresy) pozostają w 100% kompatybilne.
+
+Definicja AccountAgeReport.csv – finalna specyfikacja
+Plik: AccountAgeReport.csv
+Separator: ;
+Pierwsza linia: sep=;
+
+1) Schemat (nagłówek – 23 kolumny, niezmienny) – kolejność kolumn:
+- konto – login MT5
+- account_start_date – data/czas resetu (PL, minuty)
+- account_end_date – data/czas końca życia konta (PL, minuty)
+- session_id – ID sesji, w której nastąpił koniec życia konta
+- account_start_balance – saldo na starcie okresu życia (po resecie)
+- account_end_balance – saldo na końcu życia konta
+- max_equity_history – maksymalne equity w całym okresie życia konta
+- max_drawdown_pln – maksymalny obsunięcie kapitału w PLN (w całym okresie, liczony na equity)
+- total_lot_current_max – maksymalny łączny lot (total lots) w całym okresie życia konta
+- account_age_days – liczba dni od account_start_date do account_end_date (pełne dni)
+- active_trading_days – liczba dni kalendarzowych, w których były transakcje w tym okresie
+- total_net_profit – wynik netto okresu: account_end_balance - account_start_balance
+- max_drawdown_percent – maksymalny drawdown w %, odniesiony do account_start_balance
+- profit_factor – sum_profit / sum_loss (z okresu życia konta; brak strat → 999.99 lub 0)
+- total_trades – liczba wszystkich transakcji zamkniętych w okresie
+- win_rate_percent – 100 * win_trades / total_trades
+- avg_trade_profit – total_net_profit / total_trades (0, jeśli brak transakcji)
+- max_consecutive_wins – maksymalna seria transakcji z zyskiem
+- max_consecutive_losses – maksymalna seria transakcji ze stratą
+- avg_trade_duration_min – średni czas trwania transakcji w minutach (z okresu)
+- most_traded_symbol – symbol z największą liczbą transakcji w okresie
+- market_session_failure – sesja rynkowa, w której nastąpił koniec życia konta (np. Tokyo, London, NY, Overlap)
+- total_sessions – liczba zakończonych sesji (SessionID) w tym okresie życia konta
+
+2) Kiedy powstaje NOWY wiersz (początek życia konta)
+Nowy wiersz powstaje wyłącznie przy resecie konta (wykrytym w HandleBalanceReset).
+Do pliku trafia tylko konto, które miało fizycznie wykonany reset – w OnInit nie tworzy się wiersza.
+
+3) Kiedy wiersz jest AKTYWNY i jak jest aktualizowany
+Wiersz jest aktywny od momentu resetu aż do końca życia konta (g_account_age_reported == false).
+Źródło aktualizacji: każda zakończona sesja (EndSessionFinalize), gdy open_cnt = 0 i sesja się finalizuje.
+
+4) Kiedy wiersz KOŃCZY życie (staje się historyczny)
+Warunek: g_day_failed == true oraz EndSessionFinalize dla sesji (open_cnt = 0).
+Najpierw UpsertAccountAgeRow() (ostatnia aktualizacja), zaraz potem g_account_age_reported = true.
+Od tego momentu wiersz jest historyczny i nie może być modyfikowany; kolejny reset tworzy nowy wiersz.
+
+===============================================================================
+
+## 15) Dokumentacja funkcjonalności / raportów
+
+### 25. Zasada dokumentacji funkcjonalności / raportów
+Dla każdego nowego raportu CSV (np. AccountAgeReport.csv, NowyRaportX.csv) oraz
+każdej większej funkcjonalności, AI musi utworzyć plik dokumentacji w katalogu EA:
+- NazwaFunkcjonalnosci_VERIFICATION.md
+  (np. docs/AccountAgeReport_VERIFICATION.md)
+
+Taki plik musi zawierać co najmniej:
+- pełną definicję raportu (nagłówek CSV, lista kolumn, kolejność, typy),
+- opis, kiedy powstaje nowy wiersz, kiedy wiersz jest aktualizowany, kiedy kończy życie,
+- źródła danych (które zmienne globalne, które pliki CSV),
+- checklistę „impactu”:
+  - czy zmieniane są istniejące pliki CSV (jakie, w jaki sposób),
+  - czy istniejące dane są kompatybilne,
+  - czy mogą wystąpić regresje dla już działających raportów,
+  - jakie dodatkowe logi/diagnostyka zostały dodane.
+
+AI nie może wprowadzać nowych raportów ani większych funkcjonalności bez takiego pliku –
+najpierw powstaje dokument _VERIFICATION.md, dopiero potem zmiany w .mq5.
+
+Lokalizacja dokumentów:
+- Wszystkie pliki *_VERIFICATION.md trzymamy w tym samym katalogu co DailySessionLogger_v2.mq5,
+  bez podkatalogów.
+
+Aktualizacja dokumentu przy zmianach:
+- Jeżeli później zmieniamy istniejący raport / funkcjonalność, AI musi:
+  - zaktualizować odpowiedni *_VERIFICATION.md,
+  - w podsumowaniu jasno napisać, które punkty dokumentu zostały zmienione.
+Pre-Conditions / Zasady do każdorazowej pracy z kodem
+
+
+1.	Obowiązek analizy każdego załączonego pliku
+Sam fakt załączenia pliku (kodu źródłowego, dokumentu, CSV, zrzutu ekranu itp.) przez użytkownika jest jednoznaczną intencją, że plik ten ma zostać przeanalizowany i wzięty pod uwagę przy odpowiedzi. AI nie wymaga dodatkowego polecenia typu "przeanalizuj ten plik". Dotyczy to w szczególności:
+•	kodów MT5 (które dodatkowo muszą być kompilowane zgodnie z pkt 8),
+•	plików z zasadami (jak ten),
+•	logów, zrzutów błędów,
+•	przykładowych danych CSV.
+Jeśli z jakiegoś powodu plik ma zostać zignorowany (np. jest załączony tylko jako kontekst historyczny), użytkownik wyraźnie to zaznaczy w treści.
+
+1b. Podczas analizy mojego zapytania lub błędów , które wysyłam na bieżąco musisz  korzystasz z dostępu (przeglądać je samodzielnie abym nie musiał ich każdorazowo załączać) c folder z DailySessionLogger_v2.mq5 oraz logów Mt5 oraz generowany plików csv . 
+
+1c. Dodatkowo, jeśli widzisz błędy podczas review w folderze DailySessionLogger_v2.mq5  oraz oraz logów Mt5 oraz generowanych plików csv nawet takie , o których sam nie napiszę to masz obowiązek mi to zgłosić , że coś działa albo nieoptymalnie albo generuje błąd np. zauważysz, że dane zapisują się z niepoprawnym formacie pliku csv i się rozjeżdzają np. profit lub lot zamieniono na datę albo generuje się cały string ze ; bez rozbicia na kolumny excel itd.
+
+1d.Dostęp do logów i plików CSV przy analizie problemów
+- W projekcie utworzono dowiązania symboliczne (junction) do folderów:
+  - `data` → zawiera pliki CSV generowane przez EA (np. DAILY_ACCOUNTSDETAILS.csv,DailySessionSummary.csv, SessionDD_Thresholds.csv, DailySessionDeals*.csv)
+  - `logs` → zawiera logi MT5 (pliki `.log`)
+- Przy każdej analizie problemu, błędów lub zapytań dotyczących danych sesji, AI ma obowiązek:
+  - Sprawdzić zawartość folderów `data` i `logs`.
+  - Odnieść się do najnowszych plików (np. z dzisiejszą datą) w celu diagnozy.
+  - Jeśli pliki są niekompletne lub brakuje ich, poinformować użytkownika.
+- AI może również prosić użytkownika o wskazanie konkretnego pliku do analizy, jeśli to konieczne.
+
+2.	Obowiązek dodawania opisowych komentarzy w kodzie
+Przy każdej modyfikacji kodu AI ma obowiązek opatrywać poszczególne bloki logiczne krótkimi komentarzami wyjaśniającymi, co się w nich dzieje (np. // Sprawdź, czy plik istnieje, // Utwórz nowy plik, // Zapisz nagłówek). Komentarze mają być zwięzłe, ale opisowe – ich celem jest ułatwienie zrozumienia intencji i przepływu logiki. Dotyczy to zarówno nowego kodu, jak i zmian w istniejącym.
+
+3.	Zawsze pisze w podsumowaniu  Jak zmiany które proponujesz w kodzie wymagaja usunięcia plików DAILY lub SessionDD
+
+4.	Zawsze pisze w podsumowaniu  jak zmiany które proponujesz w kodzie mogą spowodować regresję innych funkcjonalności
+
+5.	Pamietaj że zmiana która proponujesz nie może zmianiać podstawowej (corowej) logiki kodu
+
+6.	Pamiętaj że jak się nie pytam o poprzednie rzeczy tzn ze zostały przeze mnie zaimplementowane i nie wracaj do nich ponownie w nowych komentarzach z wyjaśnieniami lub przypomnieniami
+
+7.	każda zmiana którą mi sugerujesz musi mieć swój kontakst pokazany przez ciebie jak i gdzie ją osadzić w obecnym kodzie. Nie możesz mi pisać np. zmiana w program ” datetime now_min = FloorToMinute(TimeCurrent()); // ZAMIANA z NowTime()” to jest bez kontekstu w kodzie
+„(1) Kontekst – istniejący fragment kodu, (2) Proponowana wersja po zmianie – pełny blok pod spodem”.
+
+8.	Zawsze pisz zmiany w bazie/tabeli jaki jest schemat. Cokolwiek zmieniasz na schemacie lub funkcjach/nowych funckcjach musisz odnosić do schamatu czy schemat na dany nagłówek aby nie doprowadzić do rozjechania się kolumn/nagłówków w generowanych plikach CSV
+
+9.	każdorazowo w podsumowaniu proponować czy rozszerzyc warstwe logowania , zeby uniknac pdoobnych problemów w przyszłosci
+
+10.	ilekroć dostajesz ode mnie kod z mt5 w ramach nowo proponowanych przez ciebie zmian to najpierw sam musisz na swoim srodowisku pamieci podrecznej wykonac kompilacje tych zmian aby upewnić się, że to co proponujesz zadziała np. ze jakiegoś globala nie brakuje czy mt5 obsługuje daną funkcję , którą proponujesz itd.
+po naszej poprawce z błędem kompilacji ustaliliśmy, że przy każdej propozycji zmian AI podwójnie sprawdza:
+
+kompletność klamr {} / } w całym bloku,
+że kod pozostaje wewnątrz funkcji i nie „wycieka” na poziom globalny.
+W obecnym pliku przy pkt 10 jest tylko wymóg kompilacji, bez tego zapisu. Warto dodać pod pkt 10 te dwa punkty (albo osobny krótki akapit).
+
+
+11.	Zasada ciągłości pliku per konto
+Obecne zachowanie:
+Jeśli DailySessionDeals<konto>.csv istnieje, EnsureHeaderDailyDealsPerAccount(perfile) tylko sprawdza istnienie i niczego nie resetuje – dopisujesz kolejne deale, zachowując historię wszystkich dni.
+Jeśli plik zostanie ręcznie skasowany, przy pierwszym wywołaniu EnsureHeaderDailyDealsPerAccount(perfile) utworzy się nowy plik; od tego momentu logujesz od pierwszej najbliższej transakcji (czyli „od zera” w sensie nowego pliku, ale tylko dla kolejnych dni/tego dnia).
+Tego nie ruszamy – jest zgodne z Twoją ZASADĄ.
+
+
+12.	Checklist „impactu” w podsumowaniu
+„W każdym podsumowaniu zmian AI stosuje mini‑checklistę z pkt 13 (4 pytania).”
+
+13.	Twarda kontrola schematu przy każdej zmianie
+Rozszerzenie Twojej obecnej zasady o schematach:
+Przy każdej zmianie dotyczącej logowania do CSV AI ma obowiązek:
+Wypisać pełny nagłówek (lista kolumn, kolejność) dla każdego dotkniętego pliku.
+Napisać:
+czy nagłówek się zmienia,
+czy liczba kolumn się zmienia,
+jak wygląda przykładowy wiersz po zmianie.
+Wskazać, czy istniejące dane w tym pliku będą:
+kompatybilne, częściowo kompatybilne, niekompatybilne (wtedy musi zaproponować nowy plik zgodnie z zasadą B).
+To eliminuje „po cichu” dokładane kolumny deal‑owe pod stary nagłówek.
+Checklist „impactu” w podsumowaniu
+•	Masz już część tego w dokumencie, ale proponuję doprecyzować, że podsumowanie zawsze zawiera mini‑checklistę:
+•	W każdym podsumowaniu zmian AI musi odpowiedzieć na 4 pytania:
+•	Czy zmiana dotyka schematu jakiegoś pliku CSV? Jeśli tak, którego i jak.
+•	Czy zmiana wymaga usunięcia / zarchiwizowania / zignorowania istniejących plików?
+•	Jakie są potencjalne regresje – konkretne funkcje lub raporty, które mogą się zachować inaczej.
+•	Czy sugerowane jest rozszerzenie warstwy logowania (np. version tag w nagłówku, dodatkowe DEBUG w logach).
+•	To zbiera Twoje dotychczasowe zasady i wymusza ich stosowanie przy każdej propozycji kodu.
+________________________________________
+
+
+14.	Definicje plików CSV i schematy (NIEZMIENNE bez mojej zgody)
+W tym projekcie generowane są 4 główne pliki CSV. Dla każdego pliku obowiązują jednocześnie:
+•	definicja „co oznacza jeden wiersz”,
+•	pełny schemat nagłówka (lista kolumn, kolejność),
+•	znaczenie każdej kolumny.
+Każda propozycja zmiany któregokolwiek z tych schematów (dodanie/usunięcie/przestawienie kolumn, zmiana znaczenia pola) musi być osobno przeze mnie zatwierdzona i wyraźnie opisana w podsumowaniu przez AI.
+________________________________________
+1. DailySessionSummary.csv – globalne podsumowanie sesji
+•	1 wiersz = 1 sesja (session_id) na danym koncie.
+•	Każdy wiersz to podsumowanie TOTALS dla jednej sesji (profit, DD, loty, margin) w danym dniu.
+Nagłówek (po dodaniu nowej kolumny):
+date;konto;session_id;start_balance;end_balance;max_session_equity_drawdown;max_session_profit;max_single_lot;max_total_lot;max_margin_burned;max_session_equity_burned_percent;account_reset;minute_session_start;minute_session_end
+Definicje kolumn:
+•	date – data dnia (g_day_start).
+•	konto – login MT5.
+•	session_id – identyfikator sesji.
+•	start_balance – balance na starcie sesji.
+•	end_balance – balance na końcu sesji.
+•	max_session_equity_drawdown – najgorszy equity DD w PLN w tej sesji (wartość ujemna lub 0).
+•	max_session_profit – łączny wynik sesji w PLN (suma wszystkich profit_only dla danego session_id).
+•	max_single_lot – maksymalny pojedynczy wolumen pozycji w sesji.
+•	max_total_lot – maksymalna łączna wielkość pozycji w sesji.
+•	max_margin_burned – max margin used % w sesji (maksimum z (margin / equity) * 100 w trakcie sesji).
+•	max_session_equity_burned_percent – max equity burned % w sesji: (|max_session_equity_drawdown| / start_balance * 100).
+•	account_reset – status dnia/sesji: FAILED, RESET lub pusty.
+•	minute_session_start – minuta startu sesji (lokalnie).
+•	minute_session_end – minuta końca sesji (lokalnie).
+________________________________________
+2. DailySessionDeals<konto>.csv – log per konto, per transakcja
+•	Nazwa: DailySessionDeals<login>.csv.
+•	1 wiersz = 1 zamknięty deal (transakcja) w ramach danej sesji (session_id).
+•	Wiele wierszy z tym samym session_id opisuje wszystkie transakcje danej sesji na tym koncie.
+Nagłówek (18 kolumn):
+date;konto;session_id;deal_time;deal_ticket;symbol;direction;volume;price;profit_only;max_session_equity_drawdown;max_session_profit;max_total_lot;max_margin_burned;max_session_equity_burned_percent;account_reset;minute_session_start;minute_session_end
+Definicje kolumn:
+•	date – data dnia (g_day_start).
+•	konto – login MT5.
+•	session_id – identyfikator sesji.
+•	deal_time – czas zamknięcia deala (lokalny, zaokrąglony do minuty).
+•	deal_ticket – ticket MT5.
+•	symbol – instrument (np. BTCUSD).
+•	direction – buy / sell.
+•	volume – wolumen pozycji w lotach (LotStr).
+•	price – cena zamknięcia deala.
+•	profit_only – zysk/strata tej jednej transakcji (DEAL_PROFIT, bez swapów/komisji jeśli tak zdefiniowane).
+•	max_session_equity_drawdown – najgorszy equity DD w PLN w tej sesji (stały dla wszystkich wierszy danego session_id).
+•	max_session_profit – łączny wynik sesji w PLN (suma profit_only dla danego session_id).
+•	max_total_lot – maksymalna łączna wielkość pozycji w sesji.
+•	max_margin_burned – max margin used % w sesji (maksimum z (margin / equity) * 100 w trakcie sesji).
+•	max_session_equity_burned_percent – max equity burned % w sesji: (|max_session_equity_drawdown| / start_balance * 100).
+•	account_reset – FAILED / RESET / pusty.
+•	minute_session_start – minuta startu sesji (lokalnie).
+•	minute_session_end – minuta końca sesji (lokalnie).
+________________________________________
+3. SessionDD_Thresholds.csv – log progów DD w sesjach
+•	1 wiersz = jedno przekroczenie konkretnego poziomu DD/threshold w danej sesji.
+•	Plik opisuje historię „schodzenia w dół” po progach DD (np. -1000, -2000 itd.) z dodatkowymi informacjami o equity, marginie i lotach.
+Nagłówek (18 kolumn – NIEZMIENNY):
+date;konto;session_id;minute_reached;threshold;session_max_dd_so_far;margin_burned;equity_at_time;session_start_balance;session_end_balance;single_lot_current_max;total_lot_current_max;minute_session_start;minute_session_end;total_session_profit;total_session_loss;margin_call;account_closed_stop_out
+Definicje kolumn:
+•	date – data dnia.
+•	konto – login MT5.
+•	session_id – identyfikator sesji.
+•	minute_reached – minuta, w której osiągnięto dany próg DD.
+•	threshold – wartość progu DD (np. -1000, -2000).
+•	session_max_dd_so_far – maksymalny DD w PLN do tego momentu sesji.
+•	margin_burned – wartość procentowa zgodna z logiką tego pliku (zużycie/burned względem startu w chwili progu).
+•	equity_at_time – equity w momencie osiągnięcia progu.
+•	session_start_balance – balance na starcie sesji.
+•	session_end_balance – balance na końcu sesji (dla tej sesji).
+•	single_lot_current_max – maksymalny pojedynczy wolumen pozycji do tego momentu sesji.
+•	total_lot_current_max – maksymalny łączny wolumen pozycji do tego momentu sesji.
+•	minute_session_start – minuta startu sesji.
+•	minute_session_end – minuta końca sesji.
+•	total_session_profit – całkowity wynik sesji (profit) w momencie logu progu.
+•	total_session_loss – całkowita suma strat sesji w momencie logu progu.
+•	margin_call – flaga (0/1 lub false/true), czy wystąpił margin call.
+•	account_closed_stop_out – flaga, czy konto zostało zamknięte przez stop out.
+________________________________________
+4. AccountDetails.csv (jeśli używany) – snapshot parametrów konta
+•	1 wiersz = jeden snapshot parametrów konta (np. start dnia, reset, zmiana ustawień).
+Przykładowy nagłówek (dopasować do realnego pliku):
+date;konto;broker;currency;leverage;start_balance;equity;margin_free;comment
+Definicje kolumn (do doprecyzowania po pokazaniu pliku):
+•	date – data snapshotu.
+•	konto – login MT5.
+•	broker – nazwa brokera/serwera.
+•	currency – waluta konta.
+•	leverage – dźwignia.
+•	start_balance – balance na moment snapshotu.
+•	equity – equity na moment snapshotu.
+•	margin_free – wolny margin na moment snapshotu.
+•	comment – komentarz (np. „reset balansu”, „zmiana brokera” itp.).
+________________________________________
+Zasada ogólna:
+Powyższe schematy (lista kolumn, ich kolejność i znaczenie) są NIEZMIENNE bez mojej wyraźnej zgody.
+AI ma przy każdej propozycji zmiany logiki CSV:
+•	wypisać pełny nagłówek,
+•	napisać, czy nagłówek i liczba kolumn się zmienia,
+•	podać przykładowy wiersz po zmianie,
+•	określić kompatybilność istniejących danych (kompatybilne / częściowo / niekompatybilne).
+
+
+
+15.	Nie dotykaj działającego core’a bez potrzeby
+AI nie może modyfikować funkcji oznaczonych przez mnie jako kluczowe (np. AppendDailyFinalRow, LogThreshold, UpsertDailyRowPerAccount, EndSessionFinalize), chyba że:
+Ja wyraźnie poproszę o zmianę tej funkcji, lub AI w podsumowaniu jasno wykaże, że bez zmiany tej funkcji nie da się zrealizować mojego celu. 
+W takim wypadku AI musi:
+Opisać „przed/po” – co dokładnie zmienia się w logice funkcji.
+Wskazać potencjalny wpływ na inne funkcjonalności (np. zamykanie sesji, powiadomienia, liczenie DD).
+To ma chronić core logiki, która już działa i jest testowana.
+
+
+16.	Jedno źródło prawdy dla powiadomień / side‑effectów
+Jeżeli jakaś funkcja odpowiada za „widoczny efekt zewnętrzny” (np. NotifySessionEnd, wysyłanie alertów, zapis końca sesji), AI nie może duplikować tego efektu w kilku miejscach.
+AI ma:
+Wskazać jedno miejsce (funkcję), która będzie odpowiedzialna za dany efekt.
+W podsumowaniu napisać wprost:
+„Od teraz tylko funkcja X wywołuje NotifySessionEnd; wszystkie inne wywołania usuwamy”.
+To jest reakcja na chwilowe dublowanie NotifySessionEnd w UpsertDailyRowPerAccount i EndSessionFinalize.
+
+
+17.	Wszystkie potencjalne błędy/zmiany, które wyamgałyby dodania do warstwy logowania muszą być proponowane przez AI na bieżąco aby w przyszłości uniknąć takich samych błędów i problemów z diagnozą. Ew. Testy diagnostyczne jeśli potrzeba.
+
+
+18.	Zasada nazewnictwa (żeby już nie było takich akcji)
+W tym projekcie trzymamy się zawsze dokładnie nazw z pliku – czyli z podkreśleniami:
+g_login, g_day_start, g_session_start_time, g_session_max_dd, g_session_max_total_lot, g_day_max_margin_burned itd.
+Jeśli podaję Ci fragment funkcji, nie wolno mi zmieniać stylu (np. na glogin, gdaystart), tylko używam dokładnie tych identycznych identyfikatorów.
+Jeżeli kiedyś będziemy robić refactor nazw, to robimy to globalnie: najpierw pokazuję Ci pełny diff „stare → nowe”, a dopiero potem zmieniam wszystkie wystąpienia w całym pliku, nigdy mieszanki dwóch stylów.
+
+
+19.	DEFINICJE
+Sesja tradingowa – definicja:
+•	Sesja startuje, gdy liczba otwartych pozycji przechodzi z 0 → >0
+•	Sesja kończy się, gdy wraca do 0 i wszystkie zamknięcia były w tej samej minucie (my uznajemy “minutę zamknięcia sesji” = minuta, w której konto stało się FLAT)
+
+Definicje pól sesyjnych DD / zysku (NIEZMIENNE)
+Dla wszystkich logów sesyjnych (notyfikacje, DailySessionDeals<konto>.csv, DailySessionSummary.csv) obowiązują stałe definicje:
+•	profit_only – zysk/strata pojedynczego deala (zamkniętej transakcji) w ramach danej session_id:
+w kodzie HistoryDealGetDouble(deal_ticket, DEAL_PROFIT).
+•	max_session_equity_drawdown – najgorszy equity drawdown w PLN w trakcie sesji:
+minimalna wartość (equity_t - g_session_start_equity) po starcie sesji; zwykle wartość ujemna (np. -9063,89).
+•	max_session_profit – łączny wynik sesji w PLN:
+suma wszystkich profit_only w ramach danej session_id, w kodzie g_session_profit_pos + g_session_profit_neg.
+•	max_session_equity_burned_percent – maksymalny procent „zjedzonego” equity w sesji względem balance na starcie sesji:
+[ max_session_equity_burned_percent = \frac{|max_session_equity_drawdown|}{g_session_start_balance} \times 100% ]
+W kodzie: session_burned = (MathAbs(g_session_max_dd) / g_session_start_balance) * 100.0;.
+To jest jedyne źródło wartości % w notyfikacji końca sesji.
+•	max_margin_burned – maksymalny procent zajętego marginu (margin used %) w trakcie sesji:
+maksimum z wartości margin_used = (margin / equity) * 100.0 liczonych w UpdateSessionMetrics() w ramach danej session_id.
+W CSV i raportach ta kolumna oznacza „najwyższe zajęcie marginu w sesji”, a NIE equity-burned.
+
+
+20.	rozdzielenie plików global vs per‑konto
+Jeśli prosisz o dodanie nowych kolumn tylko dla per‑konto raportów (np. minut sesji), ja nie mogę tego robić w globalnym DailySessionSummary.csv, chyba że napiszesz wprost „zmień definicję globalnego pliku”. Domyślnie zmiany idą wyłącznie w DailySessionSummary<konto>.csv lub w nowy plik o nowej nazwie.
+
+Zmiany dla DailySessionSummary.csv  robisz tlyko w  EnsureHeaderDailyGlobal()
+A zmiany dla per‑konto raportów w EnsureHeaderDaily
+
+Nietykalność ustalonych definicji plików
+Jeżeli wcześniej została ustalona definicja pliku (np. liczba wierszy per sesja / per transakcja i lista kolumn), AI nie może jej zmieniać ani reinterpretować, chyba że ja wyraźnie poproszę o zmianę definicji.
+Każda propozycja zmiany musi zaczynać się od zdania:
+„Ta zmiana nie zmienia definicji pliku X” albo
+„Ta zmiana zmienia definicję pliku X w następujący sposób: …”.
+•	max_daily_profit w deals – w obecnym kodzie to jest to samo pole, co w globalnym summary: maksymalny dodatni session_net spośród wszystkich sesji w danym dniu (czyli „najlepsza sesja dnia”).
+Nie ma sensu powtarzać tego co w jednym wierszu globalnego pliku, więc wywalamy z per‑deal.
+
+21.	Notyfikacja końca sesji (NotifySessionEnd) – format NIEZMIENNY
+Notyfikacja końca sesji (NotifySessionEnd) ma ZAWSZE mieć format:
+session end <session_id> dla <konto> o <minute_session_end> | max_lot=<max_total_lot> | max_dd=<max_session_equity_drawdown> | max_session_equity_burned_percent=<%DD> | max_session_profit=<profit>
+Gdzie:
+•	max_total_lot = g_session_max_total_lot (najwyższe łączne loty w sesji, format LotStr z przecinkiem).
+•	max_session_equity_drawdown = g_session_max_dd (najgorszy DD equity w PLN, dwie cyfry po przecinku).
+•	max_session_equity_burned_percent = (|g_session_max_dd| / g_session_start_balance) * 100 (procentowo, dwie cyfry po przecinku).
+•	max_session_profit = g_session_profit_pos + g_session_profit_neg (suma profitów sesji w PLN).
+W tej notyfikacji NIE wolno podmieniać pól na min_margin, margin_used ani inne wartości bez mojej pisemnej zgody.
+
+22.Nieusuwanie istniejących komentarzy
+Przy każdej modyfikacji kodu AI nie usuwa istniejących komentarzy, chyba że ja wyraźnie o to poproszę (np. „wyczyść stare komentarze w tej funkcji”). Nowe komentarze mogą być dokładane nad/pod istniejącymi, ale stare komentarze pozostają w kodzie, aby zachować pełny kontekst historyczny i wcześniejsze wyjaśnienia.
+23.„Po każdej informacji ode mnie skompilowałem EA AI ma obowiązek automatycznie sprawdzić aktualny kod i najnowsze pliki CSV/logi MT5 pod kątem zgodności z ostatnio uzgodnionymi zmianami.”
+
+24. AccountAgeReport.csv – zasady”, z kilkoma jasnymi punktami:
+
+Definicja pliku:
+
+„AccountAgeReport.csv – 1 wiersz = 1 okres życia konta (od resetu do FAIL/stop‑out/equity < 1000 PLN).”
+„Wiersze w tym pliku nigdy nie są usuwane, mogą być jedynie nadpisywane w ramach tego samego okresu (klucz: konto + account_start_date).”
+Klucz i niezmienność wierszy:
+
+„Klucz okresu: konto + account_start_date (czas resetu).
+Ten klucz jest niezmienny w czasie – reset tego samego konta tworzy nowy wiersz z nową datą startu.”
+„Po osiągnięciu g_day_failed == true dla danego okresu wiersz staje się historyczny – nie wolno go już modyfikować.”
+Schemat i stałość nagłówka:
+
+Wypisać dokładny nagłówek 23 kolumn (jak wyżej) i dopisać:
+„Schemat AccountAgeReport.csv jest nietykalny bez mojej wyraźnej zgody – nie wolno zmieniać kolejności kolumn, nazw ani liczby kolumn.”
+Źródło danych i próg FAIL:
+
+„Triggerem końca życia konta jest g_day_failed == true, ustawiane gdy equity < 1000 lub balance < 1000 (i/lub stop‑out wg margin level / DEAL_REASON_STOPOUT).”
+„Wszystkie agregaty (PF, DD, total_trades, win_rate, durations, max_equity_history, most_traded_symbol, total_sessions) są liczone poziomie okresu życia konta, nie pojedynczej sesji.”
+Zasada nie‑regresji istniejących raportów:
+
+„Implementacja i zmiany związane z AccountAgeReport.csv nie mogą zmieniać definicji ani schematu istniejących plików: DailySessionSummary.csv, DailySessionDeals_<konto>.csv, SessionDD_Thresholds.csv.
+Jeśli zmiana wymagałaby ingerencji w któryś z tych plików – musi to być osobno opisane i uzgodnione.”
+Checklista impactu (doprecyzowanie):
+
+Przy każdej zmianie dotyczącej AccountAgeReport AI musi w podsumowaniu dopisać:
+czy dotknięty został schemat AccountAgeReport.csv (tak/nie, jak),
+czy zmiana może w jakikolwiek sposób wpłynąć na generowanie 4 istniejących raportów,
+czy wiersze historyczne (zakończone okresy) pozostają w 100% kompatybilne.
+To powinno wystarczyć, żeby przyszłe zmiany były spójne z obecną definicją i nie „przy okazji” nie popsuły istniejących CSV.
+
+Definicja AccountAgeReport.csv – finalna specyfikacja
+Plik: AccountAgeReport.csv
+Separator: ;
+Pierwsza linia: sep=;
+1. Schemat (nagłówek – 23 kolumny, niezmienny)
+Kolejność kolumn:
+
+konto – login MT5
+account_start_date – data/czas resetu (PL, minuty)
+account_end_date – data/czas końca życia konta (PL, minuty)
+session_id – ID sesji, w której nastąpił koniec życia konta
+account_start_balance – saldo na starcie okresu życia (po resecie)
+account_end_balance – saldo na końcu życia konta
+max_equity_history – maksymalne equity w całym okresie życia konta
+max_drawdown_pln – maksymalny obsunięcie kapitału w PLN (w całym okresie, liczony na equity)
+total_lot_current_max – maksymalny łączny lot (total lots) w całym okresie życia konta
+account_age_days – liczba dni od account_start_date do account_end_date (pełne dni)
+active_trading_days – liczba dni kalendarzowych, w których były transakcje w tym okresie
+total_net_profit – wynik netto okresu: account_end_balance - account_start_balance
+max_drawdown_percent – maksymalny drawdown w %, odniesiony do account_start_balance
+profit_factor – sum_profit / sum_loss (z okresu życia konta; brak strat → 999.99 lub 0)
+total_trades – liczba wszystkich transakcji zamkniętych w okresie
+win_rate_percent – 100 * win_trades / total_trades
+avg_trade_profit – total_net_profit / total_trades (0, jeśli brak transakcji)
+max_consecutive_wins – maksymalna seria transakcji z zyskiem
+max_consecutive_losses – maksymalna seria transakcji ze stratą
+avg_trade_duration_min – średni czas trwania transakcji w minutach (z okresu)
+most_traded_symbol – symbol z największą liczbą transakcji w okresie
+market_session_failure – sesja rynkowa, w której nastąpił koniec życia konta (np. Tokyo, London, NY, Overlap)
+total_sessions – liczba zakończonych sesji (SessionID) w tym okresie życia konta
+2. Kiedy powstaje NOWY wiersz (początek życia konta)
+Nowy wiersz powstaje wyłącznie przy resecie konta (wykrytym w HandleBalanceReset). Do pliku trafia tylko konto, które miało fizycznie wykonany reset – w OnInit nie tworzy się wiersza.
+
+Warunek wejścia:
+wykryty reset balansu (deal typu BALANCE z komentarzem „reset balance” / „balance reset” – IsBalanceResetDeal()),
+wywołanie HandleBalanceReset(reset_server_time, reset_comment).
+Zachowanie w HandleBalanceReset:
+ustalany jest nowy okres życia (g_account_start_time, g_account_start_balance, g_account_max_equity, liczniki = 0, g_account_age_reported = false),
+g_session_end_time = 0, żeby w nowym wierszu account_end_date = account_start_date i session_id = 0,
+na końcu bloku Account Age wywoływane jest UpsertAccountAgeRow(): tworzy nowy wiersz w pliku (dopisywany na końcu, bo klucz jeszcze nie istnieje).
+W pliku: jeśli nie ma wiersza z kluczem (konto, account_start_date) → dopisywany jest nowy wiersz; wcześniejsze wiersze (tego samego lub innych kont) są nietykalne (historyczne).
+Klucz wiersza: konto + account_start_date (format daty jak w kolumnie – czas lokalny do minut).
+Każdy reset tego samego konta tworzy nowy wiersz z nową datą startu.
+
+3. Kiedy wiersz jest AKTYWNY i jak jest aktualizowany
+Wiersz jest aktywny od momentu resetu aż do końca życia konta (g_account_age_reported == false).
+
+Źródło aktualizacji: każda zakończona sesja (EndSessionFinalize), gdy open_cnt = 0 i sesja się finalizuje.
+
+Co się dzieje w EndSessionFinalize (przed NotifySessionEnd):
+jeśli g_account_age_reported == false: wywoływane jest UpsertAccountAgeRow().
+UpsertAccountAgeRow(): buduje linię CSV z aktualnych globali (BuildAccountAgeLine), szuka w pliku wiersza o kluczu (konto, account_start_date); jeśli znajdzie – nadpisuje tę linię, jeśli nie – dopisuje na końcu. Inne wiersze nie są zmieniane.
+Przed upsertem globalne liczniki Account Age są już zaktualizowane (m.in. w ProcessCloseDeals i UpdateSessionMetrics: g_total_sessions++, g_account_max_equity, g_total_trades, g_win_trades, serie, duration, active_trading_days itd.).
+W czasie życia konta w pliku jest dokładnie jeden AKTYWNY wiersz na konto/okres, aktualizowany po każdej zakończonej sesji; wiersze historyczne (zakończone okresy) są zamrożone i nigdy nadpisywane.
+
+4. Kiedy wiersz KOŃCZY życie (staje się historyczny)
+Wiersz kończy życie, gdy w danym okresie konta nastąpi FAIL i sesja się zakończy.
+
+Warunek końca życia:
+g_day_failed == true (ustawiane gdy equity < 1000 PLN lub balance < 1000 PLN, ewentualnie stop‑out),
+oraz EndSessionFinalize dla sesji, w której wystąpił ten FAIL (open_cnt = 0).
+Zachowanie w EndSessionFinalize przy końcu życia:
+najpierw wywoływane jest UpsertAccountAgeRow() – ostatnia aktualizacja wiersza (wszystkie 23 pola z finalnymi wartościami),
+zaraz potem ustawiane jest g_account_age_reported = true.
+Od tego momentu UpsertAccountAgeRow() nie modyfikuje już tego wiersza (na początku funkcji: if(g_account_age_reported) return;). Wiersz pozostaje w pliku jako historyczny i nie może być przez nikogo ani nic nadpisany. Kolejny reset tego konta tworzy nowy wiersz z nową datą startu.
+
+25. Zasada dokumentacji funkcjonalności / raportów
+
+Dla każdego nowego raportu CSV (np. AccountAgeReport.csv, NowyRaportX.csv) oraz każdej większej funkcjonalności, AI musi utworzyć plik dokumentacji w katalogu EA:
+NazwaFunkcjonalnosci_VERIFICATION.md
+np. docs/AccountAgeReport_VERIFICATION.md.
+Taki plik musi zawierać co najmniej:
+pełną definicję raportu (nagłówek CSV, lista kolumn, kolejność, typy),
+opis, kiedy powstaje nowy wiersz, kiedy wiersz jest aktualizowany, kiedy kończy życie,
+źródła danych (które zmienne globalne, które pliki CSV),
+checklistę „impactu”:
+czy zmieniane są istniejące pliki CSV (jakie, w jaki sposób),
+czy istniejące dane są kompatybilne,
+czy mogą wystąpić regresje dla już działających raportów,
+jakie dodatkowe logi/diagnostyka zostały dodane.
+AI nie może wprowadzać nowych raportów ani większych funkcjonalności bez takiego pliku – najpierw powstaje dokument _VERIFICATION.md, dopiero potem zmiany w .mq5.
+Lokalizacja dokumentów
+
+Wszystkie pliki *_VERIFICATION.md trzymamy w tym samym katalogu co DailySessionLogger_v2.mq5, bez podkatalogów.
+Aktualizacja dokumentu przy zmianach
+
+Jeżeli później zmieniamy istniejący raport / funkcjonalność, AI musi:
+zaktualizować odpowiedni *_VERIFICATION.md,
+w podsumowaniu jasno napisać, które punkty dokumentu zostały zmienione.
+
+26. Zasada zakresu operacji diagnostycznych (junction scope)
+
+Przy analizach, diagnostykach i reconcilacji AI działa wyłącznie w folderach objętych przez junctiony udostępnione przez użytkownika.
+
+Dozwolone w tym zakresie:
+- wyszukiwanie plików i treści,
+- odczyt logów / CSV / kodu,
+- kopiowanie plików między katalogami w obrębie tego samego zakresu,
+- komendy pomocnicze diagnostyczne (np. listowanie, echo, sprawdzenie istnienia ścieżki).
+
+Niedozwolone bez wyraźnej zgody użytkownika:
+- operacje poza zakresem junctionów,
+- modyfikacje plików poza ustalonym zakresem diagnozy.
+
+W podsumowaniu AI ma krótko wskazać, w jakim zakresie ścieżek pracowało podczas diagnozy i jakie pliki zostały odczytane/utworzone/skopiowane.

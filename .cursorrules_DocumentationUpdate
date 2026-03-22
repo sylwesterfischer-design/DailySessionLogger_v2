@@ -1,0 +1,16 @@
+# Zasada aktualizacji dokumentacji przy zmianach w kodzie
+
+## Główna zasada
+
+**Każdorazowa zmiana w kodzie, która dotyka definicji, schematu, przepływu lub zachowania danej funkcjonalności, wymaga aktualizacji powiązanej z nią dokumentacji wykonawczej (*.md) w projekcie.**
+
+- AI przy każdej takiej zmianie **musi** zidentyfikować, które pliki `*.md` (np. `*_VERIFICATION.md`, inne docs w katalogu EA) opisują tę funkcjonalność.
+- AI **aktualizuje** te pliki w tej samej sesji co zmiany kodu: dopisuje lub koryguje sekcje tak, aby dokumentacja odzwierciedlała **aktualny** stan implementacji (definicje, triggery, schematy, funkcje, checklisty).
+- W podsumowaniu zmian AI **wymienia**, które pliki `.md` zostały zaktualizowane i w jakim zakresie (np. „zaktualizowano docs/AccountAgeReport_VERIFICATION.md: sekcje 2–5 i 7”).
+
+Dotyczy to w szczególności:
+- raportów CSV i ich schematów (np. docs/AccountAgeReport_VERIFICATION.md),
+- zasad kodowania i reguł po błędach (.curorrules-coding_improvment itp., jeśli są przechowywane jako .md),
+- każdego innego pliku `*.md` w katalogu projektu, który opisuje zachowanie lub strukturę kodu zmienianego w danej sesji.
+
+**Bez aktualizacji dokumentacji zmiana kodu jest niekompletna.**
