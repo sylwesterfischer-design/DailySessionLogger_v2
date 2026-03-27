@@ -17,6 +17,11 @@ input int    InpTimerSeconds   = 1;
 input long   InpMagicFilter    = -1;     // -1 = all
 input string InpSymbolFilter   = "";     // "" = all
 input double InpDDStep         = 1000.0; // threshold step in account currency
+// Diagnostyka i retry: deal profit-only (DEAL_PROFIT) bywa aktualizowany z opóznieniem po zamknieciu pozycji.
+// Jeśli sesja konczy sie przy total_profit_only==0, a w historii sa deale OUT/INOUT z DEAL_PROFIT==0,
+// to robimy krotki retry skanu, zeby nie przegapic "póznio aktualizowanych" profitów.
+input int    InpLateProfitRetrySeconds       = 15; // ile sekund czekac przed 2-tym skanem
+input int    InpLateProfitRetrySampleLimit   = 12; // ile ticketów p==0 wypisac (tylko gdy podejrzewamy rozjazd)
 
 input string InpDailyFile      = "DailySessionSummary.csv";
 input string InpThreshFile     = "SessionDD_Thresholds.csv"; //Ĺťeby DailySessionSummary.csv trzymaĹ historiÄ wielu dni (1 wiersz/dzieĹ/konto, z przecinkami), a perâkonto i deals zostaĹy bez zmian, zrĂłb trzy rzeczy.
@@ -717,12 +722,22 @@ void FlushPendingWriteQueueForFile(const string target_name)
 {
    string qname = target_name + g_pending_write_suffix;
 
+   // Otwórz kolejkę do odczytu tekstowego.
+   // Uwaga: czytamy linia-po-linii (nie FileReadString(..., FileSize)),
+   // bo odczyt "po bajtach" potrafi wnosić NUL-e i psuć format CSV.
    int hq = FileOpen(qname, FILE_READ | FILE_COMMON | FILE_TXT);
    if(hq == INVALID_HANDLE)
       return; // brak kolejki
 
-   long sz = FileSize(hq);
-   string content = (sz > 0 ? FileReadString(hq, (int)sz) : "");
+   string content = "";
+   int q_lines = 0;
+   while(!FileIsEnding(hq))
+   {
+      string row = FileReadString(hq);
+      // Zachowaj klasyczny CRLF, spójny z AppendRow.
+      content += row + "\r\n";
+      q_lines++;
+   }
    FileClose(hq);
 
    if(content == "")
@@ -737,7 +752,7 @@ void FlushPendingWriteQueueForFile(const string target_name)
    {
       // Jeśli nadal zablokowany - nie kasujemy kolejki.
       Print("FlushPendingWriteQueueForFile: target still locked/unopenable target=", target_name,
-            " queue=", qname, " err=", GetLastError());
+            " queue=", qname, " queued_lines=", q_lines, " err=", GetLastError());
       return;
    }
 
@@ -749,7 +764,7 @@ void FlushPendingWriteQueueForFile(const string target_name)
    FileDelete(qname);
    // Log sukcesu — łatwiej potwierdzić w Experts, że pending faktycznie się opróżnił.
    Print("FlushPendingWriteQueueForFile: OK dopisano kolejkę do target=", target_name,
-         " bytes=", (string)StringLen(content));
+         " lines=", q_lines, " bytes=", (string)StringLen(content));
 }
 
 void FlushPendingWriteQueues()
@@ -1338,6 +1353,22 @@ double   g_dd_alert_sent = 0; // Poziom ostatniego wysłanego alertu drawdown (2
 double   g_margin_level_alert_sent = 0; // Poziom ostatniego wysłanego alertu Margin Level (80,50,20)
 // Alerty sumy wolumenu otwartych pozycji w sesji (max total lot) — progi 50 / 100 / 150 / 200
 double   g_total_lot_alert_sent = 0; // Ostatnio „zaliczony” próg (50, 100, 150, 200)
+bool     g_is_live_account = false;  // Konto LIVE (produkcja) -> alerty co 10 lot
+
+bool IsLiveProductionAccount(const ulong login, const string server)
+{
+   string srv = server;
+   StringToLower(srv);
+   if(StringFind(srv, "live") >= 0)
+      return true;
+
+   // Konta LIVE z docs/trading_accounts_mt5.md (+ historyczne warianty loginów do zgodności).
+   if(login == 10849931 || login == 11711840 || login == 11710937 || login == 11711937 ||
+      login == 18495775 || login == 18435775 || login == 18495776 || login == 18495777)
+      return true;
+
+   return false;
+}
 
 // -------------------- Account Age Report globals --------------------
 // Dane jednego okresu życia konta (od resetu do FAIL/stop-out)
@@ -2602,37 +2633,52 @@ void UpdateSessionMetrics()
 
    // ============================================================
    // TOTAL_LOT_ALERT — progi sumy lotów (otwarte pozycje w sesji, ten sam filtr co sesja)
-   // Progi 50 / 100 / 150 / 200; osobno if (nie else-if), żeby w jednym ticku dobić kilka progów naraz
+   // LIVE (produkcja): co 10 lot -> "10Lots Opened!", "20Lots Opened!", ...
+   // Pozostałe konta: progi 50 / 100 / 150 / 200
    // ============================================================
    {
       double tl = g_session_max_total_lot;
-      if(tl >= 50.0 && g_total_lot_alert_sent < 50.0)
+      if(g_is_live_account)
       {
-         g_total_lot_alert_sent = 50.0;
-         string msg = StringFormat("TOTAL_LOT_ALERT 50 | konto=%s total_lot=%.2f (max w sesji)",
-                     (string)g_login, tl);
-         Alert(msg); Print(msg); SendNotification(msg);
+         double next_live_threshold = g_total_lot_alert_sent + 10.0;
+         while(tl >= next_live_threshold)
+         {
+            g_total_lot_alert_sent = next_live_threshold;
+            string msg = StringFormat("%.0fLots Opened!", next_live_threshold);
+            Alert(msg); Print(msg); SendNotification(msg);
+            next_live_threshold += 10.0;
+         }
       }
-      if(tl >= 100.0 && g_total_lot_alert_sent < 100.0)
+      else
       {
-         g_total_lot_alert_sent = 100.0;
-         string msg = StringFormat("TOTAL_LOT_ALERT 100 | konto=%s total_lot=%.2f (max w sesji)",
-                     (string)g_login, tl);
-         Alert(msg); Print(msg); SendNotification(msg);
-      }
-      if(tl >= 150.0 && g_total_lot_alert_sent < 150.0)
-      {
-         g_total_lot_alert_sent = 150.0;
-         string msg = StringFormat("TOTAL_LOT_ALERT 150 | konto=%s total_lot=%.2f (max w sesji)",
-                     (string)g_login, tl);
-         Alert(msg); Print(msg); SendNotification(msg);
-      }
-      if(tl >= 200.0 && g_total_lot_alert_sent < 200.0)
-      {
-         g_total_lot_alert_sent = 200.0;
-         string msg = StringFormat("TOTAL_LOT_ALERT 200 | konto=%s total_lot=%.2f (max w sesji)",
-                     (string)g_login, tl);
-         Alert(msg); Print(msg); SendNotification(msg);
+         if(tl >= 50.0 && g_total_lot_alert_sent < 50.0)
+         {
+            g_total_lot_alert_sent = 50.0;
+            string msg = StringFormat("TOTAL_LOT_ALERT 50 | konto=%s total_lot=%.2f (max w sesji)",
+                       (string)g_login, tl);
+            Alert(msg); Print(msg); SendNotification(msg);
+         }
+         if(tl >= 100.0 && g_total_lot_alert_sent < 100.0)
+         {
+            g_total_lot_alert_sent = 100.0;
+            string msg = StringFormat("TOTAL_LOT_ALERT 100 | konto=%s total_lot=%.2f (max w sesji)",
+                       (string)g_login, tl);
+            Alert(msg); Print(msg); SendNotification(msg);
+         }
+         if(tl >= 150.0 && g_total_lot_alert_sent < 150.0)
+         {
+            g_total_lot_alert_sent = 150.0;
+            string msg = StringFormat("TOTAL_LOT_ALERT 150 | konto=%s total_lot=%.2f (max w sesji)",
+                       (string)g_login, tl);
+            Alert(msg); Print(msg); SendNotification(msg);
+         }
+         if(tl >= 200.0 && g_total_lot_alert_sent < 200.0)
+         {
+            g_total_lot_alert_sent = 200.0;
+            string msg = StringFormat("TOTAL_LOT_ALERT 200 | konto=%s total_lot=%.2f (max w sesji)",
+                       (string)g_login, tl);
+            Alert(msg); Print(msg); SendNotification(msg);
+         }
       }
    }
 
@@ -2701,6 +2747,13 @@ Print("ProcessCloseDeals: wywołane z g_session_active=", g_session_active,
    // ---------------------------------------------------------
    double session_total_profit = 0.0;
 
+   // Diagnostyka "rozjazdu": sesja jest domykana, ale total_profit_only wychodzi 0.0,
+   // a deale OUT/INOUT z DEAL_PROFIT==0.0 moga miec niezerowe (DEAL_COMMISSION/DEAL_SWAP)
+   // i dopiero po chwili uaktualniac sie w historii.
+   int    diag_out_inout_deals          = 0;
+   int    diag_out_inout_profit_nonzero = 0;
+   int    diag_out_inout_profit_zero    = 0;
+
    for(int i = 0; i < total; i++)
    {
       ulong deal_ticket = HistoryDealGetTicket(i);
@@ -2723,10 +2776,20 @@ Print("ProcessCloseDeals: wywołane z g_session_active=", g_session_active,
       if(InpMagicFilter != -1 && magic != InpMagicFilter)
          continue;
 
-      // profit bez swap/commission
+      // profit bez swap/commission (to jest nasza profit-only metryka)
       double p = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+      // Liczymy statystyki diagnostyczne jeszcze przed anti-duplicate,
+      // bo w retry chcemy sprawdzic czy "brak profitów" wynika z p==0 na skanie.
+      diag_out_inout_deals++;
       if(p == 0.0)
+      {
+         diag_out_inout_profit_zero++;
          continue;
+      }
+      else
+      {
+         diag_out_inout_profit_nonzero++;
+      }
 
       long deal_time_msc = (long)HistoryDealGetInteger(deal_ticket, DEAL_TIME_MSC);
 
@@ -2742,10 +2805,126 @@ Print("ProcessCloseDeals: wywołane z g_session_active=", g_session_active,
       session_total_profit += p;
    }
 
+   // Retry jeżeli w pierwszym skanie profit-only wyszedl 0, a history contains OUT/INOUT deale (z p==0),
+   // co może oznaczac opóznione uaktualnienie DEAL_PROFIT w MT5.
+   bool do_retry_late_profit = false;
+   if(session_total_profit == 0.0 &&
+      diag_out_inout_deals > 0 &&
+      diag_out_inout_profit_nonzero == 0 &&
+      InpLateProfitRetrySeconds > 0)
+   {
+      do_retry_late_profit = true;
+   }
+
    PrintFormat("ProcessCloseDeals: session_id=%d total_profit_only=%.2f (konto=%I64u) from=%s to=%s",
                g_session_id, session_total_profit, g_login,
                TimeToString(from_server, TIME_DATE|TIME_MINUTES),
                TimeToString(to_server,   TIME_DATE|TIME_MINUTES));
+
+   if(do_retry_late_profit)
+   {
+      PrintFormat("ProcessCloseDeals: LATE PROFIT suspected. session_id=%d sleeping=%d sec; out_inout_deals=%d p!=0=%d p==0=%d",
+                  g_session_id, InpLateProfitRetrySeconds, diag_out_inout_deals,
+                  diag_out_inout_profit_nonzero, diag_out_inout_profit_zero);
+
+      // Diagnostyka: wypisz pierwsze deale OUT/INOUT z DEAL_PROFIT==0, ktore wchodza do tego samego HistorySelect.
+      // To ma byc twardy dowod: czy te ticket'y z raportu w ogole pojawily sie w historii dla sesji.
+      if(InpLateProfitRetrySampleLimit > 0)
+      {
+         int printed = 0;
+         for(int i = 0; i < total && printed < InpLateProfitRetrySampleLimit; i++)
+         {
+            ulong deal_ticket = HistoryDealGetTicket(i);
+            if(deal_ticket == 0)
+               continue;
+
+            long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+            if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT)
+               continue;
+
+            string sym = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+            if(InpSymbolFilter != "" && sym != InpSymbolFilter)
+               continue;
+
+            long magic = HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
+            if(InpMagicFilter != -1 && magic != InpMagicFilter)
+               continue;
+
+            double p = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+            if(p != 0.0)
+               continue;
+
+            double comm = HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION);
+            double swap = HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+            double net  = p + comm + swap;
+
+            long deal_time_msc = (long)HistoryDealGetInteger(deal_ticket, DEAL_TIME_MSC);
+            datetime deal_time = (datetime)(deal_time_msc / 1000);
+
+            printed++;
+            PrintFormat("DEBUG ProcessCloseDeals pre-retry p==0: session_id=%d ticket=%I64u time=%s p=%.2f comm=%.2f swap=%.2f net=%.2f",
+                        g_session_id, deal_ticket, MinuteStrLocal(ToLocal(deal_time)),
+                        p, comm, swap, net);
+         }
+      }
+
+      Sleep(InpLateProfitRetrySeconds * 1000);
+
+      // Ponownie wybieramy historię z tym samym FROM ale przesuniętym TO,
+      // bo DEAL_PROFIT bywa aktualizowany chwilę po zamknięciu pozycji.
+      datetime to_server_retry = TimeCurrent();
+      if(!HistorySelect(from_server, to_server_retry))
+      {
+         PrintFormat("ProcessCloseDeals: retry HistorySelect failed err=%d", GetLastError());
+      }
+      else
+      {
+         int total_retry = HistoryDealsTotal();
+         double session_total_profit_retry = 0.0;
+
+         for(int i = 0; i < total_retry; i++)
+         {
+            ulong deal_ticket = HistoryDealGetTicket(i);
+            if(deal_ticket == 0)
+               continue;
+
+            long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+            if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT)
+               continue;
+
+            string sym = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+            if(InpSymbolFilter != "" && sym != InpSymbolFilter)
+               continue;
+
+            long magic = HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
+            if(InpMagicFilter != -1 && magic != InpMagicFilter)
+               continue;
+
+            double p_retry = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+            if(p_retry == 0.0)
+               continue;
+
+            long deal_time_msc_retry = (long)HistoryDealGetInteger(deal_ticket, DEAL_TIME_MSC);
+
+            // ANTI‑DUPLICATE jak w pierwszym skanie
+            if(deal_ticket <= g_last_deal_ticket_logged &&
+               deal_time_msc_retry <= g_last_deal_time_msc_logged)
+               continue;
+            if(deal_ticket <= g_last_deal_ticket_logged)
+               continue;
+
+            session_total_profit_retry += p_retry;
+         }
+
+         PrintFormat("ProcessCloseDeals: retry finished session_id=%d total_profit_only_retry=%.2f (old=%.2f)",
+                     g_session_id, session_total_profit_retry, session_total_profit);
+
+         // Aktualizujemy wynik do LogDealPerAccount/LogDealDetail dla tego domknięcia sesji.
+         session_total_profit = session_total_profit_retry;
+         to_server = to_server_retry;
+         total = total_retry;
+      }
+   }
 
    // ---------------------------------------------------------
    // 2) DRUGIE PRZEJŚCIE: logujemy każdy deal z tego samego zakresu
@@ -2861,6 +3040,10 @@ int OnInit()
 
    // konto MT5
    g_login = (ulong)AccountInfoInteger(ACCOUNT_LOGIN);
+   g_is_live_account = IsLiveProductionAccount(g_login, AccountInfoString(ACCOUNT_SERVER));
+   Print("Account mode detection: login=",(string)g_login,
+         " server=", AccountInfoString(ACCOUNT_SERVER),
+         " live=", (g_is_live_account ? "true" : "false"));
 
    // GLOBALNY plik dzienny – jedna nazwa z inputu
    g_daily_file = InpDailyFile;   // "DailySessionSummary.csv"
