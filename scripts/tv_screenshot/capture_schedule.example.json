@@ -1,0 +1,37 @@
+{
+  "_comment": "interval: M1 co 5min, M2 co 4min, M3 co 6min, S15=15s co 5min (tv_interval 15S); reszta jak w jobs. filename_suffix — np. M1_20260327_120000_chart.png.",
+  "_comment_storage": "storage_state — plik JSON z save_tv_storage_state.py (w repo domyslnie ponizej).",
+  "chart_url_template": "https://pl.tradingview.com/chart/PoqvuZcl/?interval={tv_interval}",
+  "storage_state": "scripts/tv_screenshot/tv_storage_state.json",
+  "wait_ms": 8000,
+  "viewport": { "width": 1920, "height": 1080 },
+  "output_dir": "docs/tv_scheduled",
+  "log_file": "docs/tv_scheduled/tv_capture.log",
+  "filename_suffix": "chart",
+  "_comment_headed": "headed:true = widoczne okno — często usuwa Tryb podglądu / błędy Pine w headless (koszt: musi działać sesja pulpitu).",
+  "headed": false,
+  "_comment_models_log": "OCR Tesseract + Excel po każdym udanym PNG; junction models_logs → patrz docs/MODELS_LOG_EXCEL.md",
+  "models_log": {
+    "enabled": false,
+    "excel_path": "models_logs/trading_models.xlsx",
+    "schema_template": "models_logs/schema_template_tv_models.xlsx",
+    "tesseract_cmd": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+    "ocr_lang": "eng",
+    "ocr_legend_crop": [0.0, 0.06, 0.38, 0.52],
+    "ocr_chart_crop": [0.0, 0.06, 1.0, 0.94],
+    "m5_context_default": "",
+    "h4_context_default": ""
+  },
+  "jobs": [
+    { "label": "M1", "tv_interval": "1", "period_seconds": 300, "align": "interval" },
+    { "label": "M2", "tv_interval": "2", "period_seconds": 240, "align": "interval" },
+    { "label": "M3", "tv_interval": "3", "period_seconds": 360, "align": "interval" },
+    { "label": "S15", "tv_interval": "15S", "period_seconds": 300, "align": "interval" },
+    { "label": "M5", "tv_interval": "5", "period_seconds": 300, "align": "interval" },
+    { "label": "M10", "tv_interval": "10", "period_seconds": 600, "align": "interval" },
+    { "label": "M15", "tv_interval": "15", "period_seconds": 900, "align": "interval" },
+    { "label": "H1", "tv_interval": "60", "period_seconds": 3600, "align": "interval" },
+    { "label": "H4", "tv_interval": "240", "period_seconds": 14400, "align": "interval" },
+    { "label": "D1", "tv_interval": "1D", "period_seconds": 86400, "align": "interval" }
+  ]
+}

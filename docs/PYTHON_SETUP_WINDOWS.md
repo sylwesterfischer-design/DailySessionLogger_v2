@@ -7,6 +7,13 @@ Potrzebne do:
 
 **Jeśli `.msix` się sypie** (błąd rejestru, App Installer) — spróbuj **`python-manager-*.msi`** (§0, Wariant MSI) **albo** od razu **§ 1 (python.org)**. Na skrypty CSV python.org w zupełności wystarczy i zwykle ustawia PATH bez problemów.
 
+### Długie ścieżki Windows (260 znaków) — pytanie instalatora / `py-manager`
+
+Jeśli pojawi się: *Windows is not configured to allow paths longer than 260 characters* / *Update setting now? [y/N]*:
+
+- **`y`** — zalecane przy rozwoju (głębokie `venv`, `pip`, Playwright, długie ścieżki pod `AppData`). Zwykle wymaga **uprawnień administratora** i **restartu**.
+- **`N`** — można później włączyć ręcznie (np. zasada *Enable Win32 long paths* albo rejestr `LongPathsEnabled` = 1); bez tego czasem padają instalacje pakietów przy bardzo długich ścieżkach.
+
 ---
 
 ## 0. Python Install Manager — `python-manager` (`.msi` / `.msix`, bez junction do Cursora)
@@ -41,6 +48,10 @@ a w oknie **Zmienne środowiskowe** nadal **nie ma** oczywistego wpisu „Python
 2. Albo ręcznie: **Ustawienia** → **Aplikacje** → **Ustawienia zaawansowane** (lub **Zaawansowane ustawienia aplikacji**) → **Aliasy wykonywania aplikacji**  
    (EN: *Settings* → *Apps* → *Advanced app settings* → *App execution aliases*).
 3. Upewnij się, że przełączniki przy **python.exe** / **Python** / **Python install manager** są **Włączone** (czasem konflikt robi **inny** alias ze Sklepu — wtedy **wyłącz** zbędny wpis, który „kradnie” polecenie `python`).
+
+**`python -m venv .venv`** w katalogu projektu — przy **powodzeniu nie wypisuje nic**; sprawdź powstanie folderu `.venv\` oraz `.\.venv\Scripts\python.exe --version`. Zrzuty Playwright (TradingView): `scripts\tv_screenshot\README.md`.
+
+**Zmienne środowiskowe → Path:** lista w oknie dialogowym bywa **ucięta**; `python` może być dostępny przez `...\WindowsApps\` lub `...\Local\Python\bin` — użyj **Edytuj** i przewiń całość.
 
 **Jak sprawdzić, czy już działa (nowe okno terminala):**
 

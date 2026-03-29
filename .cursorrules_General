@@ -21,7 +21,7 @@ W takich przypadkach AI nie ma pytać użytkownika o to, co jest łatwe do autom
 
 ### 1d.3. ZAKAZ zgadywania stanu plików CSV / Common — obowiązek junctionów (twardy)
 - AI **nie wolno** podawać jako faktu ani „najpewniejszej przyczyny” zdań w stylu: „źródłowy plik w Common jest pusty”, „EA nie zapisał”, „plik musiał być pusty”, dopóki **nie wykona** odczytu/listingu przez dostępne w projekcie junctiony (w szczególności **`data\`** dla CSV EA, ewentualnie inne udostępnione ścieżki).
-- **Kolejność:** (1) próba `Glob` / `Read` / listing na `data\` i powiązanych junctionach; (2) jeśli brak dostępu lub pliku — **jednoznaczna informacja** „nie mam treści pliku w zasięgu workspace / brak pliku w listing”, **bez** zastępowania tego spekulacją o MT5 Common.
+- **Kolejność (patrz też §1d.9):** (1) próba `Read` / listing na **znanych** junctionach z `docs/JUNCTIONS_INVENTORY.md` (i standardowe wzorce `scripts_*`, `reports_*`, `data\`, `logs_*`); (2) **dopiero potem** `Glob` — **nie** traktować pustego wyniku `Glob` jako dowodu braku pliku w junctionie; (3) jeśli brak dostępu lub pliku — **jednoznaczna informacja** „nie mam treści pliku w zasięgu workspace / brak pliku w listing”, **bez** zastępowania tego spekulacją o MT5 Common.
 - Dozwolone jest **osobno** wyjaśnienie **logiki kodu** MQL5 (np. „gdy `ReadFileCommonToString` zwróci pusty string, skrypt …”) **bez** łączenia tego w zdanie „u Ciebie dlatego plik był pusty”, jeśli nie odczytano pliku.
 - Naruszenie tej zasady = taka sama klasa błędu jak w 1d.1 — **priorytet diagnostyczny** nad szybką hipotezą.
 
@@ -43,6 +43,31 @@ W takich przypadkach AI nie ma pytać użytkownika o to, co jest łatwe do autom
 - W **`docs/*.md`** (oraz innych instrukcjach w repo), przy **każdym** bloku poleceń do skopiowania, AI ma **jawnie napisać**, **w czym** użytkownik ma je uruchomić: **PowerShell**, **cmd**, **Git Bash (MINGW64)**, **zintegrowany terminal Cursora** (PowerShell), **MetaEditor** (kompilacja), **Python** (`py` / `python`), itp.
 - Jeśli polecenie działa w **kilku** powłokach (np. `git` w PowerShellu i w Git Bash), dokument ma to **powiedzieć wprost** (jak w `GITHUB_SETUP_STEP_BY_STEP.md` § B3) albo podać **jedną** zalecaną powłokę + zdanie „to samo działa w …”.
 - **Zakaz:** blok kodu bez jednoznacznej etykiety typu „**Środowisko: PowerShell**” / „W PowerShell:”, gdy nie jest to oczywiste z kontekstu (np. sam `git config` na Windows).
+
+### 1d.7. Wiele kopii MT5 + `ExportDailyHistoryHtml.mq5` — kopiuj do **właściwego** klienta
+- Użytkownik ma **wiele** folderów instalacji MT5 (osobne „kopie” terminala); **kanoniczna lista** tych zaznaczonych przez niego do pracy z tym projektem jest w **`docs/trading_accounts_mt5.md`** — przy mapowaniu skrótów loginu (§1d.2) AI **może** się tam odwołać, zamiast zgadywać.
+- **`ExportDailyHistoryHtml.mq5`** to **osobny** EA od głównego loggera: aby odzyskać dane z konta X, plik `.mq5` trzeba **skopiować** do `MQL5\Experts\` (lub Advisors) **tej instalacji MT5**, na której użytkownik jest **zalogowany na X**, potem **skompilować w MetaEditorze tej kopii** i uruchomić EA tam. **Nie** wystarczy sama kompilacja w repo Cursor — binarka musi powstać w **docelowym** `MQL5` danej kopii terminala.
+- Szczegóły kolejności HTML → Python: **`docs/EXPORT_DAILY_HTML_JUNCTIONS.md`**.
+- Gotowce **PowerShell / Git / junctiony** (`reports_*`, `logs_*`, `scripts_*`, `mklink /J`): **`docs/POWERSHELL_COMMANDS.md`**.
+
+### 1d.8. Utrzymanie na bieżąco: `trading_accounts_mt5.md` + `POWERSHELL_COMMANDS.md`
+- **`docs/trading_accounts_mt5.md`:** przy **każdej** istotnej zmianie zestawu kont (nowy login, nowy folder instalacji MT5, nowy plik `DailySessionDeals<LOGIN>.csv`, zmiana waluty konta, nowy wpis w arkuszu brokera) — AI ma **zaktualizować ten plik** w tej samej serii zmian co kod/docs albo **następnym** commicie po potwierdzeniu użytkownika; kolumna **Current balance** uzupełniana, gdy jest dostęp do CSV (junction `data\` / `Common`) **lub** gdy użytkownik poda wartość — **nie zgadywać** salda.
+- **`docs/POWERSHELL_COMMANDS.md`:** każda **nowa** komenda PowerShell/cmd przekazana użytkownikowi w kontekście tego repozytorium (Git, junctiony, Python, diagnostyka) ma **trafić** do tego pliku: krótki opis, tag sekcji (`[GIT]`, `[JUNCTION — …]`), **gotowy przykład** — nie zostawiaj wyłącznie w czacie, jeśli komenda ma być powtarzalna.
+
+### 1d.9. Junctiony — „złota zasada” vs `Glob`, inventory i test dostępu (twardy)
+- **Problem narzędziowy:** w Cursorze `Glob` / indeks czasem **nie widzi** zawartości folderów będących **junctionami** (dowiązaniami NTFS), mimo że `Read` na **pełnej ścieżce** w workspace działa.
+- **Przykład praktyczny (częsty):** `Glob` na `data\*.csv` może zwrócić **0 wyników**, mimo że `Read` na `data\DailySessionSummary.csv` / `data\DailySessionDeals<LOGIN>.csv` działa poprawnie. Wtedy należy operować na **znanych nazwach plików** (konwencja `DailySession*.csv`) i bezpośrednich ścieżkach, a nie wnioskować „pliku nie ma”.
+- **Obowiązek AI:** przy diagnozie plików w projekcie **nigdy** nie kończyć wniosków na zdaniu w stylu „`Glob` nic nie znalazł, więc pliku nie ma” **bez** próby `Read` / listingu na ścieżkach z **`docs/JUNCTIONS_INVENTORY.md`** oraz na typowych wzorcach roota repo: `scripts_<LOGIN>\`, `reports_<LOGIN>\`, `data\`, `data\reports_<LOGIN>\`, `logs_<LOGIN>_terminal\`, itd. (wg tego, co faktycznie istnieje u użytkownika).
+- **Utrzymywana lista:** `docs/JUNCTIONS_INVENTORY.md` — użytkownik / AI **uzupełnia** tabelę przy każdym nowym junctionie; AI przy pracy z kodem MT5 **najpierw** konsultuje ten plik (i aktualizuje go przy nowych dowiązaniach, jeśli to ta sama seria zmian).
+- **Test regresji dostępu:** skrypt **`scripts\junctions\Test-JunctionAccess.ps1`** — sprawdza istnienie ścieżek z manifestu `scripts\junctions\junctions_manifest.txt` i (jeśli możliwe) krótki listing; **exit code ≠ 0** gdy brakuje oczekiwanego junctionu — sygnał do naprawy dowiązania lub manifestu, a nie „zgadywania” stanu plików.
+- **Tworzenie junction (PowerShell) — twarda kolejność:** przed `New-Item -ItemType Junction ...` **zawsze** najpierw przejdź (`cd`) do katalogu, w którym link ma zostać utworzony (np. root repo `DailySessionLogger_v2`). Nie tworzyć junctionów z przypadkowego CWD (np. `C:\Users\<user>`), bo skrypt potem nie znajdzie `reports_<LOGIN>` / `scripts_<LOGIN>` w projekcie.
+- **Wymóg w komendach AI:** gdy AI podaje komendę tworzenia junctionu, ma podać **pełny blok 3 kroków**: (1) `cd <katalog_docelowy>`, (2) `New-Item ... -Path .\reports_<LOGIN> ...`, (3) `Get-Item .\reports_<LOGIN> | fl FullName,Attributes,Target` jako szybka walidacja.
+
+### 1d.10. Retrofit rozwiązania (`solution_retrofit`) — warstwa „jak”, nie podmiana źródła
+- **Znaczenie:** **solution_retrofit** / **retrofit rozwiązania** = ponowne użycie **tego samego podejścia logicznego** co wcześniej, z **minimalną** adaptacją do nowych warunków: inna **warstwa** przepływu (np. wyjście tylko testowe `*_pyTEST.csv` ↔ kroki PRE + `*_INSERT.csv` / produkcja), inny plik wyjściowy, większy dataset wejściowy, stricter QA — **bez** konieczności zmiany **źródła prawdy**, gdy przepływ go wymaga (np. insert nadal: raport HTML + porównanie z produkcyjnym `DailySessionDeals*.csv`).
+- **Rdzeń wspólny:** gdy dwa launchery (np. **`run_insert_pytest.bat`** vs **`run_insert_PRE.bat`**) wołają **ten sam** skrypt Python (`scripts\csv_insert_from_mt5_html\insert_from_mt5_html.py`), różnice są w **BAT** (ścieżki, `--test-outputs`, `--dry-run`, logi) — **nie** w „innej solucji parsowania” narzuconej przez sam fakt PRE vs pyTEST. Przed poprawką (por. `docs/CHANGE_LOG.md` **ID-79**, kolumna **ROOT-CAUSE**) **oba** były narażone na ten sam koszt przy tym samym wielodniowym HTML i `--only-date`: późny filtr dnia + pełna lista `HtmlDeal` + sort + RAM oraz `re.findall` materializujące wszystkie `<tr>`. Odczucie „pyTEST był szybki, PRE się zawiesił” często myli **objaw** (długi run / mały plik wynikowy w Excelu) z **root cause** (implementacja w Pythonie), albo różni się **rozmiar HTML / dzień / moment uruchomienia**, a nie logika BAT.
+- **Obowiązek przy retrofitacie:** zweryfikować **wspólny moduł** (tu: Python), nie zakładać, że „wyższa warstwa” (PRE) ma automatycznie ten sam performance co „niższa” (pyTEST), jeśli kod backendu jest identyczny.
+- **Objaw vs root cause** przy wpisach w `docs/CHANGE_LOG.md` — definicje nad tabelą w tym pliku.
 
 ===============================================================================
 
@@ -376,6 +401,37 @@ w podsumowaniu napisać wprost:
 ### 17. Rozszerzaj logowanie przy potencjalnych błędach
 Wszystkie potencjalne błędy/zmiany, które wymagałyby dodania do warstwy logowania
 muszą być proponowane na bieżąco. (Ew. testy diagnostyczne jeśli potrzeba.)
+
+### 17b. Standardowe podejście dla launcherów `*.bat` i skryptów generatorów (BAT + Python)
+Gdy AI tworzy lub modyfikuje „generator workflow” (np. `run_*.bat` + `insert_from_*.py` + zapis `*_INSERT.csv` / `*_last.log`) musi trzymać się poniższego standardu UX, progress i logowania (retrofit: minimalne zmiany w logice, ale spójne zachowanie na zewnątrz).
+
+Logowanie i pliki `*_last.log`
+- Prefiks timestampu: linie emitowane przez BAT do logu mają dostać prefiks `YYYY-MM-DD HH-mm-ss` (sekcja `:ts` / PowerShell `Get-Date`), tak aby log był jednoznaczny w czasie.
+- Polityka nadpisywania „ostatniego runa”: plik `run_insert_*_last.log` / analogiczne „_last.log” czyści się przy starcie danego launchera (`>` na początku), a dopiero potem dopisuje (`>>`).
+- Kanały wyjścia: stdout z Pythona jest przekierowany do logu, a stderr zostaje na konsoli (żeby nie ukrywać paska postępu / diagnostyki).
+
+Progress bar i czytelny feedback
+- Progress bar zawsze idzie na stderr (Python: `tqdm(file=sys.stderr, ...)` albo fallback % na stderr), a BAT nie scala stderr do logu.
+- Progress bar pokazuje się tylko gdy jest sensowny: Python ma wykrywać `sys.stderr.isatty()` i w trybie przekierowania (np. `>> log.txt`) przechodzić w wersję bez „paska” (np. linie co X% lub ciche zliczanie).
+
+Interakcje użytkownika (Yes/No) i niezawodne rozgałęzienia CMD
+- W promptach używać `choice /C TN` (nie `set /p`), a w treści promptu nie używać `*` (wildcard CMD).
+- Po `choice` używać sprawdzania z wyższego progu: `if errorlevel 2 goto :etykieta` (w CMD: `if errorlevel n` oznacza `ERRORLEVEL >= n`), a nie poleganie na `set "X=!ERRORLEVEL!"` w delayed expansion.
+- Etykiety typu `:skip` muszą być ustawione przed „ścieżką sukcesu” (`:success_exit`), a rozgałęzienie po decyzji wykonywać przed `call :ts` (jeśli timestamp ma opisywać już podjętą decyzję).
+
+Buforowanie i kodowanie (Windows CMD)
+- W BAT ustawić `PYTHONUNBUFFERED=1`, aby stdout Pythona trafiał do `*_last.log` na bieżąco (brak „pustego” logu w trakcie długiego runa).
+- Jeśli skrypt Python generuje tekst zawierający polskie znaki / Windows CMD potrafi mieć cp1252, AI ma zabezpieczyć kodowanie stdout/stderr w `main()` przez reconfigure na `utf-8` z `errors="replace"` (żeby nie przerywać workflow UnicodeEncodeError).
+
+Generowanie/rekonstrukcja CSV (w tym `start_balance/end_balance`)
+- Przy generowaniu CSV zawsze walidować nagłówek wejściowy (liczba kolumn) i zachować `sep=` z wejścia lub zdefiniować domyślnie `sep=;` tylko gdy tego brak.
+- Gdy `start_balance/end_balance` jest odtwarzane „sekwencyjnie” na bazie poprzednich sesji, AI musi użyć jednego helpera normalizacji dat (np. wspierającego `YYYY-MM-DD` i `DD.MM.YYYY`) oraz konsekwentnie używać tego samego klucza daty w:
+  - wyszukiwaniu „ostatniego znanego end_balance” dla dnia,
+  - budowaniu klucza deduplikacji (aby `18.03.2026` z CSV mapowało się na `2026-03-18` z HTML).
+- Do rekonstrukcji `end_balance` używać tej samej miary co w dealsach (w projekcie: suma `profit_only` deali sesji jako `max_session_profit`), a nie sumy innych pól o innym znaczeniu.
+
+Spójność dokumentacji
+- Jeśli zmienia się polityka logowania/format timestampów/zasady progressu — w tej samej zmianie AI aktualizuje `docs/Loggers.md` i ewentualnie wpis w `docs/CHANGE_LOG.md` (zgodnie z historią zmian).
 
 ===============================================================================
 

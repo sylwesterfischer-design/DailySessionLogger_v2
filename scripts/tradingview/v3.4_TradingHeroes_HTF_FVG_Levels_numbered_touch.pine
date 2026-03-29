@@ -1,0 +1,153 @@
+//@version=6
+// v3.4: FVG zostają po mitigacji (jak v3.3) + numer 1..n od najwcześniejszego (lewy br) +
+//       przy pierwszym dotknięciu strefy (knot lub body) — etykieta z tym numerem pod świecą.
+//       Wydajność: rangi liczone tylko gdy zmienia się liczba boxów (nie O(n²) na każdej świecy) + calc_on_every_tick=false.
+indicator("v3.4_TradingHeroes - HTF FVG + chrono # + first touch label", overlay = true, max_boxes_count = 500, max_labels_count = 500, calc_on_every_tick = false)
+
+// === Inputs: Timeframes and Colors ===
+drawM5Fvg  = input.bool(true,  "Draw M5 FVG")
+drawM15Fvg = input.bool(true,  "Draw M15 FVG")
+drawH1Fvg  = input.bool(true,  "Draw H1 FVG")
+drawH4Fvg  = input.bool(true,  "Draw H4 FVG")
+
+colorM5   = input.color(color.new(color.orange, 95), "M5 Color")
+colorM15  = input.color(color.new(color.orange, 90), "M15 Color")
+colorH1   = input.color(color.new(color.orange, 85), "H1 Color")
+colorH4   = input.color(color.new(color.orange, 80), "H4 Color")
+maxActiveBoxes = input.int(200, "Max active boxes", minval = 20, maxval = 500)
+extendExtraBars = input.int(25, "Extend extra bars (right)", minval = 0, maxval = 500)
+
+removeOnMitigation = input.bool(false, "Remove FVG when mitigated (wick touches far edge)")
+
+touchLabelOffsetTicks = input.int(8, "Touch label: offset below candle (ticks)", minval = 1, maxval = 200)
+touchLabelSize = input.string("small", "Touch label size", options = ["tiny", "small", "normal"])
+
+// === Parallel storage per FVG box ===
+var box[]   activeFvgBoxes      = array.new_box()
+var bool[]  activeFvgDirections = array.new_bool()
+var string[] activeFvgTfLabels  = array.new_string()
+var bool[]  activeFvgTouchDone  = array.new_bool()
+var int[]   activeFvgRanks      = array.new_int()
+var int     lastFvgBoxCount     = -1
+
+// Rangi 1..n tylko przy zmianie liczby boxów (O(n²) rzadko), nie na każdej świecy — unik RE10110.
+
+candleOverlapsBox(topPrice, botPrice) =>
+    float boxHi = math.max(topPrice, botPrice)
+    float boxLo = math.min(topPrice, botPrice)
+    float tol = syminfo.mintick * 0.5
+    not (high < boxLo - tol or low > boxHi + tol)
+
+deleteBoxAt(indexToDelete) =>
+    box.delete(array.get(activeFvgBoxes, indexToDelete))
+    array.remove(activeFvgBoxes, indexToDelete)
+    array.remove(activeFvgDirections, indexToDelete)
+    array.remove(activeFvgTfLabels, indexToDelete)
+    array.remove(activeFvgTouchDone, indexToDelete)
+
+removeMitigatedBoxes() =>
+    int activeBoxCount = array.size(activeFvgBoxes)
+    if activeBoxCount > 0
+        float tol = syminfo.mintick * 0.5
+        for i = activeBoxCount - 1 to 0
+            currentBox = array.get(activeFvgBoxes, i)
+            bool isBull = array.get(activeFvgDirections, i)
+            float boxTopLevel = box.get_top(currentBox)
+            float boxBottomLevel = box.get_bottom(currentBox)
+            int boxLeftBarIndex = box.get_left(currentBox)
+            bool isAfter = bar_index > boxLeftBarIndex
+            bool isMitigated = isBull ? (low <= (boxBottomLevel + tol)) : (high >= (boxTopLevel - tol))
+            if isAfter and isMitigated
+                deleteBoxAt(i)
+
+capActiveBoxes() =>
+    while array.size(activeFvgBoxes) > maxActiveBoxes
+        deleteBoxAt(0)
+
+extendBoxesToCurrentBar() =>
+    int n = array.size(activeFvgBoxes)
+    if n > 0
+        for i = 0 to n - 1
+            box.set_right(array.get(activeFvgBoxes, i), bar_index + extendExtraBars)
+
+refreshBoxTexts() =>
+    int n = array.size(activeFvgBoxes)
+    if n > 0
+        for i = 0 to n - 1
+            bx = array.get(activeFvgBoxes, i)
+            string lab = array.get(activeFvgTfLabels, i)
+            int rnk = array.get(activeFvgRanks, i)
+            box.set_text(bx, lab + " " + str.tostring(rnk))
+
+placeFirstTouchLabels() =>
+    int n = array.size(activeFvgBoxes)
+    if n > 0
+        float yOff = syminfo.mintick * touchLabelOffsetTicks
+        lblSz = touchLabelSize == "tiny" ? size.tiny : touchLabelSize == "normal" ? size.normal : size.small
+        for i = 0 to n - 1
+            if not array.get(activeFvgTouchDone, i)
+                bx = array.get(activeFvgBoxes, i)
+                int rightBar = box.get_right(bx)
+                // Pierwsza możliwa „walidacja” dopiero po świecach, na których box został zbudowany.
+                if bar_index > rightBar
+                    float t = box.get_top(bx)
+                    float b = box.get_bottom(bx)
+                    if candleOverlapsBox(t, b)
+                        int rnk = array.get(activeFvgRanks, i)
+                        label.new(bar_index, low - yOff, str.tostring(rnk), xloc = xloc.bar_index, style = label.style_label_up, color = color.new(color.white, 30), textcolor = color.black, size = lblSz)
+                        array.set(activeFvgTouchDone, i, true)
+
+// === FVG Detection and Box Drawing (per HTF) ===
+drawFvgForTimeframe(tf, tfLabel, isEnabled, baseColor) =>
+    if isEnabled
+        [h2, l1, l0, h1, h0, l2, c0, c1, tfTime] = request.security(syminfo.tickerid, tf, [high[2], low[1], low[0], high[1], high[0], low[2], close, close[1], time], barmerge.gaps_off, barmerge.lookahead_off)
+
+        bool hasBullishFvg = (h2 > l1) and (l0 < h1) and (h2 < l0) and (c0 > c1)
+        bool hasBearishFvg = (l2 < h1) and (h0 > l1) and (l2 > h0) and (c0 < c1)
+        bool isNewTfBar = ta.change(tfTime) != 0
+
+        if isNewTfBar and hasBullishFvg
+            float boxTopLevel = math.max(h2, l0)
+            float boxBottomLevel = math.min(h2, l0)
+            box bx = box.new(bar_index - 2, boxTopLevel, bar_index - 1, boxBottomLevel, border_color = na, bgcolor = baseColor, text = tfLabel, text_color = color.black, text_formatting = text.format_bold, text_halign = text.align_right, text_valign = text.align_center, text_size = size.small, extend = extend.none)
+            array.push(activeFvgBoxes, bx)
+            array.push(activeFvgDirections, true)
+            array.push(activeFvgTfLabels, tfLabel)
+            array.push(activeFvgTouchDone, false)
+
+        if isNewTfBar and hasBearishFvg
+            float boxTopLevel = math.max(l2, h0)
+            float boxBottomLevel = math.min(l2, h0)
+            box bx = box.new(bar_index - 2, boxTopLevel, bar_index - 1, boxBottomLevel, border_color = na, bgcolor = baseColor, text = tfLabel, text_color = color.black, text_formatting = text.format_bold, text_halign = text.align_right, text_valign = text.align_center, text_size = size.small, extend = extend.none)
+            array.push(activeFvgBoxes, bx)
+            array.push(activeFvgDirections, false)
+            array.push(activeFvgTfLabels, tfLabel)
+            array.push(activeFvgTouchDone, false)
+
+// === Main ===
+if removeOnMitigation
+    removeMitigatedBoxes()
+
+drawFvgForTimeframe("5",   "M5",  drawM5Fvg,  colorM5)
+drawFvgForTimeframe("15",  "M15", drawM15Fvg, colorM15)
+drawFvgForTimeframe("60",  "H1",  drawH1Fvg,  colorH1)
+drawFvgForTimeframe("240", "H4",  drawH4Fvg,  colorH4)
+
+capActiveBoxes()
+int nFvg = array.size(activeFvgBoxes)
+if nFvg != lastFvgBoxCount
+    array.clear(activeFvgRanks)
+    for i = 0 to nFvg - 1
+        int myLeft = box.get_left(array.get(activeFvgBoxes, i))
+        int before = 0
+        for j = 0 to nFvg - 1
+            int jLeft = box.get_left(array.get(activeFvgBoxes, j))
+            if jLeft < myLeft
+                before += 1
+            else if jLeft == myLeft and j < i
+                before += 1
+        array.push(activeFvgRanks, before + 1)
+    lastFvgBoxCount := nFvg
+placeFirstTouchLabels()
+refreshBoxTexts()
+extendBoxesToCurrentBar()

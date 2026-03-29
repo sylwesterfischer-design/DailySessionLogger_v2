@@ -42,6 +42,7 @@ Przykład z tej historii: brak definicji helpera `NowTime()` po przeniesieniu sk
 
 - W katalogu projektu (lub w workspace) użytkownik tworzy **junction** o nazwie **`scripts_<LOGIN>`** wskazujący na:
   - `...\MetaQuotes\Terminal\<HASH_DLA_TEGO_KONTA>\MQL5\Scripts`
+- **Krytyczny krok:** junction twórz po wejściu (`cd`) do katalogu projektu/workspace, gdzie link ma fizycznie powstać. Tworzenie z innego CWD (np. `C:\Users\<user>`) utworzy link w złym miejscu i AI/launcher go nie zobaczy.
 - Przykład: dla konta **10828174** → folder **`scripts_10828174`** → realny path z `36F3667EB5BDDE97A477149EF2950EBB\...\Scripts` (hash jest unikalny per instalacja).
 - **Bez ręcznego wpisywania hash:** jeśli w projekcie są już junctiony `logs_<LOGIN>_terminal` lub `logs_<LOGIN>` → `...\MQL5\Logs`, użytkownik może wygenerować `scripts_<LOGIN>` poleceniem z `docs/SCRIPTS_JUNCTIONS.md` (skrypt **`scripts/junctions/Create-ScriptsJunctions.ps1`**, lista loginów w `$ReconcileLogins`).
 
@@ -88,4 +89,10 @@ Jeżeli użytkownik pyta “co uruchomić teraz” w pipeline Reconcile/Flush:
   - `*_RECONCILED*` dla `InpLogin` i odpowiedniego zakresu dat (jeśli parametr daty jest używany),
   - oraz czy `*_FLUSH_TEST*` już istnieją (jeśli były uruchomione poprzednio).
 - dopiero potem ma sugerować kolejny krok (często etap A można pominąć, jeśli `*_RECONCILED*` już istnieją).
+
+## 10. Logowanie skryptów MQ5 (`Print`)
+
+- Skrypty uruchamiane z MT5 używają **`Print` / `PrintFormat`** — ten sam kanał co EA: zakładka **Eksperci** oraz pliki **`MQL5\Logs\*.log`** w profilu terminala.
+- **Mapa warstw logowania** (EA vs Python vs BAT), prefiksy EA `DailySessionLogger_v2.mq5` oraz konwencje narzędzi Python/BAT: **`docs/Loggers.md`**.
+- Zmiana polityki logowania w skryptach lub nowe konwencje `Print` — aktualizuj **`docs/Loggers.md`** w tej samej zmianie (spójnie z `.cursorrules_CodingImprovment`).
 

@@ -1,0 +1,32 @@
+# Jedna ścieżka względem rootu repo na linię (puste / # = ignorowane).
+# Pełna lista instancji — mirror: docs/JUNCTIONS_INVENTORY.md
+# Po nowym junctionie: dopisz tu + wiersz w inventory + .\scripts\junctions\Test-JunctionAccess.ps1
+data
+data\reports_10827887
+logs_10827887_EA
+logs_10827887_terminal
+logs_10827890_EA
+logs_10827890_terminal
+logs_10828174
+logs_10828174_EA
+logs_11693814
+logs_11693814_EA
+logs_11693817
+logs_11693817_EA
+logs_11720331
+logs_11720331_EA
+logs_11754867
+logs_11754867_EA
+Report_11720331
+ReportHistoryAuto_10827887
+reports_10827887
+reports_10828174
+reports_11693814
+reports_11693817
+scripts_10827887
+scripts_10828174
+scripts_11693814
+scripts_11693817
+scripts_11720331_Reconcilled
+trading_strategy
+Wyckoff_ALL

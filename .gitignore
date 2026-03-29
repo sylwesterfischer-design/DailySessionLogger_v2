@@ -22,6 +22,29 @@ __pycache__/
 .venv/
 venv/
 
+# --- Node (np. scripts/tv_screenshot_ts) ---
+node_modules/
+
+# Sesja TradingView (Playwright storage state — nie commituj)
+scripts/tv_screenshot/tv_storage_state.json
+
+# Zrzuty harmonogramu TV (PNG — lokalne, dużo plików)
+docs/tv_scheduled/
+
+# Excel + stan OCR (generowane; w repo: schema_template_tv_models.xlsx + README)
+models_logs/trading_models.xlsx
+models_logs/ocr_state.json
+models_logs/requirements_models.docx
+models_logs/~$*
+
+# Lokalne kopie MT5 / eksperymenty — poza Gitem (dopisz własne katalogi kont jeśli trzeba)
+ReportHistoryAuto_*/
+scripts_10827887/
+Wyckoff/
+Wyckoff_ALL/
+Untitled
+git_snapshot.txt
+
 # --- OS / IDE ---
 Thumbs.db
 Desktop.ini

@@ -1,0 +1,126 @@
+//@version=6
+indicator("v3.3_TradingHeroes - HTF FVG Levels (fix fonts/ lines)", overlay = true, max_boxes_count = 500)
+
+// === Inputs: Timeframes and Colors ===
+drawM5Fvg  = input.bool(true,  "Draw M5 FVG")
+drawM15Fvg = input.bool(true,  "Draw M15 FVG")
+drawH1Fvg  = input.bool(true,  "Draw H1 FVG")
+drawH4Fvg  = input.bool(true,  "Draw H4 FVG")
+
+colorM5   = input.color(color.new(color.orange, 95), "M5 Color")
+colorM15  = input.color(color.new(color.orange, 90), "M15 Color")
+colorH1   = input.color(color.new(color.orange, 85), "H1 Color")
+colorH4   = input.color(color.new(color.orange, 80), "H4 Color")
+maxActiveBoxes = input.int(200, "Max active boxes", minval = 20, maxval = 500)
+extendExtraBars = input.int(25, "Extend extra bars (right)", minval = 0, maxval = 500)
+
+// Domyślnie OFF: FVG zostają na wykresie po mitigacji (body/knot) — jak chcesz stare zachowanie, włącz.
+removeOnMitigation = input.bool(false, "Remove FVG when mitigated (wick touches far edge)")
+
+// === Active Boxes: Storage and Helpers ===
+var box[] activeFvgBoxes = array.new_box()
+var bool[] activeFvgDirections = array.new_bool()
+
+deleteBoxAt(boxesArr, directionsArr, indexToDelete) =>
+    boxToDelete = array.get(boxesArr, indexToDelete)
+    box.delete(boxToDelete)
+    array.remove(boxesArr, indexToDelete)
+    array.remove(directionsArr, indexToDelete)
+
+removeMitigatedBoxes(boxesArr, directionsArr) =>
+    int activeBoxCount = array.size(boxesArr)
+    if activeBoxCount > 0
+        float candleWickLow = low
+        float candleWickHigh = high
+        float priceTolerance = syminfo.mintick * 0.5
+
+        // Iterate backwards because we remove elements.
+        for i = activeBoxCount - 1 to 0
+            currentBox = array.get(boxesArr, i)
+            bool isBullishFvgBox = array.get(directionsArr, i)
+            float boxTopLevel = box.get_top(currentBox)
+            float boxBottomLevel = box.get_bottom(currentBox)
+            int boxLeftBarIndex  = box.get_left(currentBox)
+
+            // Mitigation by wick at FAR boundary:
+            // - Up FVG (gap h2..l0): filled when wick low reaches bottom (h2).
+            // - Down FVG (gap h0..l2): filled when wick high reaches top (l2).
+            bool isAfterCreationBar = bar_index > boxLeftBarIndex
+            bool isMitigated = isBullishFvgBox ? (candleWickLow <= (boxBottomLevel + priceTolerance)) : (candleWickHigh >= (boxTopLevel - priceTolerance))
+            if isAfterCreationBar and isMitigated
+                deleteBoxAt(boxesArr, directionsArr, i)
+
+capActiveBoxes(boxesArr, directionsArr) =>
+    while array.size(boxesArr) > maxActiveBoxes
+        deleteBoxAt(boxesArr, directionsArr, 0)
+
+extendBoxesToCurrentBar(boxesArr) =>
+    int activeBoxCount = array.size(boxesArr)
+    if activeBoxCount > 0
+        for i = 0 to activeBoxCount - 1
+            currentBox = array.get(boxesArr, i)
+            box.set_right(currentBox, bar_index + extendExtraBars)
+
+// === FVG Detection and Box Drawing (per HTF) ===
+drawFvgForTimeframe(tf, tfLabel, isEnabled, baseColor) =>
+    if isEnabled
+        [h2, l1, l0, h1, h0, l2, c0, c1, tfTime] = request.security(
+             syminfo.tickerid,
+             tf,
+             [high[2], low[1], low[0], high[1], high[0], low[2], close, close[1], time],
+             barmerge.gaps_off, barmerge.lookahead_off)
+
+        bool hasBullishFvg = (h2 > l1) and (l0 < h1) and (h2 < l0) and (c0 > c1)
+        bool hasBearishFvg = (l2 < h1) and (h0 > l1) and (l2 > h0) and (c0 < c1)
+
+        // Draw only once per new HTF bar.
+        bool isNewTfBar = ta.change(tfTime) != 0
+
+        if isNewTfBar and hasBullishFvg
+            float boxTopLevel = math.max(h2, l0)
+            float boxBottomLevel = math.min(h2, l0)
+            box bullishFvgBox = box.new(bar_index - 2, boxTopLevel, bar_index - 1, boxBottomLevel,
+                 border_color = na,
+                 bgcolor = baseColor,
+                 text = tfLabel,
+                 text_color = color.black,
+                 text_formatting=text.format_bold,
+                 text_halign = text.align_right,
+                 text_valign = text.align_center,
+                 text_size = size.small,
+                 extend = extend.none)
+            array.push(activeFvgBoxes, bullishFvgBox)
+            array.push(activeFvgDirections, true)
+
+        if isNewTfBar and hasBearishFvg
+            float boxTopLevel = math.max(l2, h0)
+            float boxBottomLevel = math.min(l2, h0)
+            box bearishFvgBox = box.new(bar_index - 2, boxTopLevel, bar_index - 1, boxBottomLevel,
+                 border_color = na,
+                 bgcolor = baseColor,
+                 text = tfLabel,
+                 text_color = color.black,
+                 text_formatting=text.format_bold,
+                 text_halign = text.align_right,
+                 text_valign = text.align_center,
+                 text_size = size.small,
+                 extend = extend.none)
+            array.push(activeFvgBoxes, bearishFvgBox)
+            array.push(activeFvgDirections, false)
+
+// === Main Execution Flow ===
+// 1) Opcjonalnie: usuń dotknięte strefy (stare zachowanie). Domyślnie NIE — FVG zostają po mitigacji.
+if removeOnMitigation
+    removeMitigatedBoxes(activeFvgBoxes, activeFvgDirections)
+
+// 2) Draw new FVG levels for enabled HTFs
+drawFvgForTimeframe("5",   "M5",  drawM5Fvg,  colorM5)
+drawFvgForTimeframe("15",  "M15", drawM15Fvg, colorM15)
+drawFvgForTimeframe("60",  "H1",  drawH1Fvg,  colorH1)
+drawFvgForTimeframe("240", "H4",  drawH4Fvg,  colorH4)
+
+// 2b) Extend boxes to current bar so text stays centered inside the visible zone.
+extendBoxesToCurrentBar(activeFvgBoxes)
+
+// 3) Keep box count bounded
+capActiveBoxes(activeFvgBoxes, activeFvgDirections)

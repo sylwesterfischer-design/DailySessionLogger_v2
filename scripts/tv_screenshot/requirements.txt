@@ -1,0 +1,7 @@
+# Instalacja z rootu repo (po utworzeniu .venv):
+#   .\.venv\Scripts\pip install -r scripts\tv_screenshot\requirements.txt
+playwright>=1.58.0
+tzdata>=2024.1
+openpyxl>=3.1.0
+pytesseract>=0.3.10
+Pillow>=10.0.0

@@ -26,6 +26,16 @@ input int    InpLateProfitRetrySampleLimit   = 12; // ile ticketów p==0 wypisac
 input string InpDailyFile      = "DailySessionSummary.csv";
 input string InpThreshFile     = "SessionDD_Thresholds.csv"; //Ĺťeby DailySessionSummary.csv trzymaĹ historiÄ wielu dni (1 wiersz/dzieĹ/konto, z przecinkami), a perâkonto i deals zostaĹy bez zmian, zrĂłb trzy rzeczy.
 
+// --- Risk sizing (tier lot alerts) ---
+// Tier thresholds are computed from ACCOUNT_BALANCE:
+// tier1 = balance/1000 * InpLotTier1LotsPer1k (standard)
+// tier2 = balance/1000 * InpLotTier2LotsPer1k (base)
+// tier3 = balance/1000 * InpLotTier3LotsPer1k (aggressive)
+input double InpLotTier1LotsPer1k = 0.35; // Tier1: standard lots per 1k balance
+input double InpLotTier2LotsPer1k = 0.40; // Tier2: base lots per 1k balance
+input double InpLotTier3LotsPer1k = 0.50; // Tier3: aggressive lots per 1k balance
+input bool   InpLotTierDebugLogs  = true; // extra diagnostics for tier alerts
+
 // --- live update dziennego wiersza ---
 int g_live_update_counter = 0;   // liczymy ticki timera
 int g_live_update_period  = 3600; // sekundy (1 godzina przy InpTimerSeconds=1)
@@ -1354,6 +1364,9 @@ double   g_margin_level_alert_sent = 0; // Poziom ostatniego wysłanego alertu M
 // Alerty sumy wolumenu otwartych pozycji w sesji (max total lot) — progi 50 / 100 / 150 / 200
 double   g_total_lot_alert_sent = 0; // Ostatnio „zaliczony” próg (50, 100, 150, 200)
 bool     g_is_live_account = false;  // Konto LIVE (produkcja) -> alerty co 10 lot
+int      g_lot_tier_alert_sent = 0;  // Najwyższy wysłany tier (0/1/2/3) w tej sesji
+datetime g_last_lot_tier_debug_log = 0;
+double   g_last_lot_tier_debug_tl  = -1.0;
 
 bool IsLiveProductionAccount(const ulong login, const string server)
 {
@@ -1368,6 +1381,15 @@ bool IsLiveProductionAccount(const ulong login, const string server)
       return true;
 
    return false;
+}
+
+void ComputeLotTierLimits(const double balance, double &t1, double &t2, double &t3)
+{
+   double b = balance;
+   if(b < 0.0) b = 0.0;
+   t1 = (b / 1000.0) * InpLotTier1LotsPer1k;
+   t2 = (b / 1000.0) * InpLotTier2LotsPer1k;
+   t3 = (b / 1000.0) * InpLotTier3LotsPer1k;
 }
 
 // -------------------- Account Age Report globals --------------------
@@ -1435,6 +1457,9 @@ void StartSession()
    g_dd_alert_sent = 0;
    g_margin_level_alert_sent = 0;
    g_total_lot_alert_sent = 0;
+   g_lot_tier_alert_sent = 0;
+   g_last_lot_tier_debug_log = 0;
+   g_last_lot_tier_debug_tl  = -1.0;
 
    // na starcie nowej sesji resetujemy dzienne flagi FAIL tylko przy resecie
    // (g_day_failed zostaje true, jeĹli juĹź byĹ stop-out / <1000 w tym dniu)
@@ -2638,6 +2663,64 @@ void UpdateSessionMetrics()
    // ============================================================
    {
       double tl = g_session_max_total_lot;
+
+      // ------------------------------------------------------------
+      // LOT TIER alerts (per balance) — LIVE accounts only
+      // tier1/2/3 computed from ACCOUNT_BALANCE (scales linearly with account size)
+      // ------------------------------------------------------------
+      if(g_is_live_account)
+      {
+         double bal_now = AccountInfoDouble(ACCOUNT_BALANCE);
+         double t1=0.0, t2=0.0, t3=0.0;
+         ComputeLotTierLimits(bal_now, t1, t2, t3);
+
+         if(InpLotTierDebugLogs)
+         {
+            datetime now_ts = TimeCurrent();
+            // Print periodic snapshot (every ~30s) or when tl visibly changes.
+            if(g_last_lot_tier_debug_log == 0 ||
+               (now_ts - g_last_lot_tier_debug_log) >= 30 ||
+               MathAbs(tl - g_last_lot_tier_debug_tl) >= 0.10)
+            {
+               PrintFormat("LOT_TIER_DEBUG | konto=%I64u live=%s balance=%.2f total_lot=%.2f t1=%.2f t2=%.2f t3=%.2f sent_tier=%d inps=(%.3f/%.3f/%.3f)",
+                           g_login,
+                           (g_is_live_account ? "true" : "false"),
+                           bal_now,
+                           tl,
+                           t1, t2, t3,
+                           g_lot_tier_alert_sent,
+                           InpLotTier1LotsPer1k,
+                           InpLotTier2LotsPer1k,
+                           InpLotTier3LotsPer1k);
+               g_last_lot_tier_debug_log = now_ts;
+               g_last_lot_tier_debug_tl  = tl;
+            }
+         }
+
+         // Use tl=max_total_lot in session, so we can trigger tiers even if positions were reduced later.
+         if(t1 > 0.0 && tl >= t1 && g_lot_tier_alert_sent < 1)
+         {
+            g_lot_tier_alert_sent = 1;
+            string msg = StringFormat("LOT TIER1 ALERT | Standard LOT limit reached | konto=%s balance=%.2f total_lot=%.2f limit=%.2f",
+                                      (string)g_login, bal_now, tl, t1);
+            Alert(msg); Print(msg); SendNotification(msg);
+         }
+         if(t2 > 0.0 && tl >= t2 && g_lot_tier_alert_sent < 2)
+         {
+            g_lot_tier_alert_sent = 2;
+            string msg = StringFormat("LOT TIER2 ALERT | Base LOT limit reached | konto=%s balance=%.2f total_lot=%.2f limit=%.2f",
+                                      (string)g_login, bal_now, tl, t2);
+            Alert(msg); Print(msg); SendNotification(msg);
+         }
+         if(t3 > 0.0 && tl >= t3 && g_lot_tier_alert_sent < 3)
+         {
+            g_lot_tier_alert_sent = 3;
+            string msg = StringFormat("LOT TIER3 ALERT | Aggressive LOT limit reached | konto=%s balance=%.2f total_lot=%.2f limit=%.2f",
+                                      (string)g_login, bal_now, tl, t3);
+            Alert(msg); Print(msg); SendNotification(msg);
+         }
+      }
+
       if(g_is_live_account)
       {
          double next_live_threshold = g_total_lot_alert_sent + 10.0;
@@ -3044,6 +3127,13 @@ int OnInit()
    Print("Account mode detection: login=",(string)g_login,
          " server=", AccountInfoString(ACCOUNT_SERVER),
          " live=", (g_is_live_account ? "true" : "false"));
+   PrintFormat("LOT_TIER_CONFIG | konto=%I64u live=%s inps=(%.3f/%.3f/%.3f) debug=%s",
+               g_login,
+               (g_is_live_account ? "true" : "false"),
+               InpLotTier1LotsPer1k,
+               InpLotTier2LotsPer1k,
+               InpLotTier3LotsPer1k,
+               (InpLotTierDebugLogs ? "true" : "false"));
 
    // GLOBALNY plik dzienny – jedna nazwa z inputu
    g_daily_file = InpDailyFile;   // "DailySessionSummary.csv"

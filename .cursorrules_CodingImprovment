@@ -1,5 +1,87 @@
 # Reguły ulepszeń kodowania (po wykrytych błędach)
 
+- **Nowe skrypty Python — diagnostyka od startu:** sekcja **„Python — nowe skrypty: diagnostyka od pierwszej wersji”** (log do pliku, README, często osobny `diagnose_*.py` / tabela w `docs/`).
+- **TradingView — zrzuty layoutu (Playwright, Python):** sekcja **„Python — Playwright / automatyzacja Chromium”** (skrypty w `scripts/tv_screenshot/`).
+- **TradingView (Pine Script):** wpadki i reguły w sekcji **[TV]** poniżej. Po każdej poprawce Pine wykrytej w tym projekcie — dopisać tu punkt, żeby się nie powtarzało.
+
+## CMD / BAT – zachowanie parsera (nie zgadywać; mini-repro przed „solution”)
+
+- **Kontekst:** Zachowanie `cmd.exe` (nawiasy w blokach `if (...)`, `set /p`, przekierowania) **nie jest intuicyjne** jak w PowerShell/Python — błąd może pojawić się dopiero w runtime (np. `". was unexpected at this time."`), a skrypt kończy się **w połowie** bez `pause` / bez `set /p`.
+- **Wymóg:** Przy **nowym lub edytowanym** `.bat` / `.cmd`, albo gdy objaw to „okno znika”, „log urywa się w połowie”, „dziwny błąd nawiasów” — AI **nie opiera się wyłącznie na teorii**; dla **wątpliwej konstrukcji** robi **minimalny repro** (jeden mały plik `.bat` w projekcie lub komenda w shellu), uruchamia ją, **potwierdza** przyczynę lub ją odrzuca.
+- **Wymóg (ogólny — przed docelową poprawką):** Każdą **hipotezę / mini-rozwiązanie** (np. „escape nawiasów”, „inna kolejność poleceń”, fragment `.bat` / wywołanie `.py`), którą da się **samodzielnie zweryfikować** w tym środowisku, AI **najpierw testuje** — minimalny plik `.bat`, `cmd /c`, `python -c "..."`, krótki skrypt tymczasowy, **uruchomienie i sprawdzenie** (sukces vs błąd, oczekiwane zachowanie). **Dopiero po** takim teście wprowadza **ostateczną** zmianę w pliku produkcyjnym (`.bat`, `.py` itd.). **Nie** proponować poprawki w kodzie użytkownika wyłącznie „na papierze”, jeśli ten sam przypadek można było najpierw **odtworzyć i puścić** lokalnie.
+- **Zakres:** Ta zasada dotyczy **wszystkiego**, co AI może w ten sposób przetestować (BAT/CMD, izolowany Python, PowerShell jednolinijkowy, regex w małym pliku itd.). Czego **nie** da się uruchomić (brak danych MT5, brak Common\Files, pełny HTML użytkownika) — **wyjątek**; wtedy obowiązuje jawny podział (poniżej).
+- **Przykład już wykryty (`docs/CHANGE_LOG.md` ID-84):**
+  - **Fakt:** Wewnątrz bloku `if (...)` (wielowierszowy) **`echo` z nieescapowanym `(`** (np. `echo błąd (RC=0)`) psuje parsowanie — `cmd` może zakończyć skrypt **zaraz po** poprzedniej linii, bez komunikatu przy sukcesie ścieżki `if`.
+  - **Wymóg:** W takich `echo` używać **`^(`** i **`^)`** (np. `echo błąd ^(RC=!RC!^)`).
+- **Przykład już wykryty (`docs/CHANGE_LOG.md` ID-88) — `choice` + `ERRORLEVEL` w delayed expansion:**
+  - **Fakt (klasyczny błąd CMD):** Zaraz po **`choice /C TN`** próba zapisania kodu wyjścia przez **`set "STEPB_CH=!ERRORLEVEL!"`** (przy **`setlocal EnableDelayedExpansion`**) bywa **niepewna**: **`!ERRORLEVEL!`** w opóźnionej ekspansji nie zawsze odzwierciedla wynik `choice`; dodatkowo samo **`set`** (i inne polecenia) może **nadpisać / zmienić `ERRORLEVEL`** zanim zostanie on sensownie odczytany — objaw: **niewłaściwa gałąź** (np. użytkownik wciska **T**, a skrypt omija **Krok B** i idzie w `success_exit`).
+  - **Wymóg:** **Nie** buforować wyniku `choice` przez `set ... !ERRORLEVEL!` w tym samym skrypcie co delayed expansion. **Wzorzec niezawodny po `choice`:** sprawdzanie **od wyższego progu** — np. **`if errorlevel 2 goto :stepb_skip`** (w CMD: `if errorlevel n` = **ERRORLEVEL ≥ n**); dla `choice /C TN` zwykle **2 = druga opcja (N)**, **1 = pierwsza (T)** — najpierw odsiewamy „N”, potem domyślna ścieżka = **T**. Etykiety `:skip` **przed** `:success_exit`, na końcu gałęzi **T** → `goto :success_exit`. Rozgałęzienie wykonać **przed** `call :ts`, jeśli timestamp ma odzwierciedlać już podjętą decyzję.
+  - **Odsyłacz:** implementacja — `run_insert_PRE.bat`; skrót w `docs/Loggers.md` (launchery BAT).
+- **Wymóg:** Po **mini-repro** (jeśli plik był tylko do testu, np. `_test_paren.bat`, `_test_setp.bat`) — **usunąć** go z repo, żeby nie zaśmiecać projektu; w rozmowie można krótko napisać, że repro było tymczasowe. **Nie** zostawiać śmieciowych skryptów „na później” bez uzasadnienia.
+- **Granica weryfikacji:** Mini-repro potwierdza **składnię i semantykę CMD** (lub inny **lokalnie** uruchomiony fragment) oraz izolowane zachowanie. **Pełnego** uruchomienia całego pipeline’u (np. `run_insert_PRE.bat` z Twoim HTML/CSV/MT5) w środowisku AI **często nie da się** wykonać — wtedy AI **jawnie** rozdziela: „**co potwierdziłem testem** (repro / komenda)” vs „**co wymaga uruchomienia u Ciebie**”.
+- **Python / launcher:** Przy wątpliwości co do zachowania na Windows (ścieżki, `py` vs `python`, kodowanie konsoli, przekierowania stdout/stderr) — **izolowany** test (`python -c "..."` lub kilkulinijkowy skrypt) zamiast samej spekulacji; po potwierdzeniu — usunąć pliki tymczasowe jak wyżej.
+- **MQL5:** Dla nowych `.mq5` obowiązuje już sekcja **„compile gate”** poniżej (needle-check + F7); tam „repro” to **kompilacja** i porównanie z dokumentacją API — nie zastępuje to reguł CMD, uzupełnia je dla innego języka.
+
+## Python / CSV — normalizacja liczb Excela (np. `session_id`)
+
+- **Przykład już wykryty (`docs/CHANGE_LOG.md` ID-91):** `DailySessionSummary.csv` ma czasem `session_id` zapisany jako tekst z wiodącym apostrofem, np. `'4` albo `'1`.
+  - **Fakt (root cause):** parser próbował wyliczyć `session_id` przez rzutowanie w stylu `int(float(...))`, co przy wiodącym apostrofie kończy się błędem (ValueError). Skutek: tie-break „ostatniej sesji przed dniem” wybiera zły rekord, a przez to `start_balance/end_balance` kolejnych sesji są przesunięte.
+  - **Wymóg (twardy):** gdy skrypt odczytuje numerowe pola z CSV generowanych przez Excela/MT5 (w tym `session_id`), AI musi:
+    - usuwać wiodący apostrof (np. `'4` -> `4`),
+    - potem wyciągać cyfry (regex) i dopiero rzutować na `int`.
+  - **Konkretnie w projekcie:** używać tego samego helpera normalizującego (np. `parse_excel_int`) we wszystkich miejscach, gdzie liczba ma znaczenie logiczne:
+    - tie-break w `previous_end_balance_for_day()`,
+    - deduplikacja w `summary_keys()` (klucz `(date, konto, session_id)`),
+    - oraz gdzie wybierasz „maksymalny” `session_id`.
+
+## Python — Playwright / automatyzacja Chromium (zrzuty witryn, m.in. TradingView — `scripts/tv_screenshot/`)
+
+- **Wspólne `launch` dla tej samej domeny:** jeśli w repo są **co najmniej dwa** entrypointy startujące Chromium do **tej samej witryny** (np. jednorazowy **zapis sesji** + **harmonogram zrzutów**), **wszystkie** muszą używać **tej samej** listy argumentów przy `chromium.launch(..., args=…)` — najlepiej **jedna stała modułowa** (tu: `CHROMIUM_LAUNCH_ARGS` w `screenshot_tv.py`, importowana przez pozostałe skrypty). **Regresja już wystąpiła:** `save_tv_storage_state.py` miał m.in. `--disable-blink-features=AutomationControlled`, a `scheduled_screenshots.py` startował „goły” Chromium → gorsze zachowanie TV (Pine, tryb podglądu) mimo poprawnego `storage_state`.
+- **Headless ≠ pełna aplikacja webowa:** typowy UA zawiera `HeadlessChrome`; wiele serwisów może **uciążać** funkcje (skrypty, licencje, „preview”) nawet przy `navigator.webdriver === false`. **Wymóg:** w konfiguracji mieć przełącznik **`headed`** (okno widoczne) i dokumentować, że to **pierwszy** krok diagnostyczny przy „w Chrome działa, w zrzucie nie”.
+- **`storage_state` ≠ profil Chrome użytkownika:** Playwright **nie** podpina się pod `%LocalAppData%\Google\Chrome`. Sesja to **JSON** z cookies/localStorage zapisywany przez Playwright. **Wymóg:** nie instruować „skopiuj ciasteczka z Chrome” bez jawnego narzędzia/kroku Playwright.
+- **Zakończenie skryptu zapisu sesji:** po `context.storage_state(path=…)` normalne jest **`browser.close()`** — okno znika; to **nie** jest „wylogowanie przez stronę”. **Wymóg:** opisać w README, żeby uniknąć fałszywego alarmu.
+- **Playwright — viewport:** rozmiaru okna **nie** ustawia się przez nieobsługiwane parametry `new_page(viewport=…)`; viewport przekazuje się do **`browser.new_context(viewport={…})`**. **Wymóg:** przed dodaniem parametrów sprawdzić API wersji Playwright w projekcie.
+- **`zoneinfo` na Windows:** `ZoneInfo("Europe/Warsaw")` wymaga danych IANA — zwykle **`tzdata`** z PyPI. **Wymóg:** trzymać `tzdata` w `requirements.txt` obok `playwright` i krótko wspomnieć w README instalacji.
+- **Root repo z `Path(__file__)` — pułapka `parents`:** dla pliku `…/DailySessionLogger_v2/scripts/tv_screenshot/foo.py` root repozytorium to **`Path(__file__).resolve().parents[2]`**. Jeśli **`base = Path(__file__).resolve().parent`** (już folder `tv_screenshot`), to root to **`base.parents[1]`** — **nie** `base.parents[2]` (w tym layoucie katalogów to wychodzi **poza** `DailySessionLogger_v2`). **Regresja:** `diagnose_tv_session.py` z `base.parents[2]` szukał `tv_storage_state.json` w złym miejscu. **Wymóg:** nowe skrypty w tym folderze liczą tak samo jak `scheduled_screenshots.py` albo wołają wspólną funkcję `_repo_root()`.
+- **`pythonw.exe` / Harmonogram zadań:** brak konsoli = **brak** widocznego stderr. **Wymóg:** procesy długie (zrzuty, worker) **logują do pliku**; jeśli są **dwa** skrypty (zapis sesji vs harmonogram), **dwa osobne pliki logów** i tabela w `docs/` — nie mieszać jednego pliku bez uzasadnienia.
+- **Logowanie Google / OAuth w przeglądarce sterowanej:** często puste okno `about:blank`, ostrzeżenia FedCM / GSI — **nie** traktować jako błąd sesji email/hasło. **Wymóg:** w dokumentacji preferować **email+hasło** na stronie docelowej dla kroków automatyzacji.
+- **CAPTCHA w bundled Chromium:** widget bywa **niewidoczny**. **Wymóg:** udokumentować alternatywę `channel="chrome"` (zainstalowany Chrome) przy zapisie sesji; nie obiecywać obejścia antybota.
+- **Diagnostyka zamiast spekulacji:** gdy „sesja zapisana, a strona inna niż w Chrome” — mały skrypt uruchamialny z CLI (URL + `storage_state` → `navigator.webdriver`, prefiks UA, liczba cookies dla domeny, opcjonalnie heurystyka tekstu strony). **Wzorzec w repo:** `diagnose_tv_session.py`.
+- **PowerShell (Windows):** w starszych wersjach **`&&` nie działa** jako łącznik poleceń — używać **`;`** albo osobnych linii; zawsze **`cd` do rootu** repo przed ścieżkami względnymi do `.venv` i `scripts\`.
+- **Odsyłacze:** `scripts/tv_screenshot/README.md`, `docs/TV_SCREENSHOT_LOGGING.md`.
+
+## Python — nowe skrypty: diagnostyka od pierwszej wersji (obowiązkowy plan przy dodawaniu `.py`)
+
+**Cel:** uniknąć sytuacji „skrypt działa w tle / `pythonw` / harmonogram i **nie widać błędu**”, „PNG/log nie powstaje i nie wiadomo dlaczego” — jak w historii `tv_screenshot` (osobne logi, plik zamiast konsoli, skrypt diagnostyczny).
+
+- **Wymóg (twardy):** przy **każdym nowym** skrypcie Pythona w tym repo, który ma być uruchamiany **ręcznie z terminala, w tle, z Harmonogramu zadań albo przez `pythonw`**, AI **już w pierwszej sensownej wersji** (w tej samej zmianie co główna logika lub bezpośrednio przed merge) dostarcza **plan diagnostyki** i jego **implementację** — nie „dopiszemy logi później” bez wyraźnego wyjątku (patrz wyjątki na końcu sekcji).
+
+- **Minimalny zestaw implementacji:**
+  1. **Plik logu** — jawna ścieżka (najlepiej obok skryptu lub pod `docs/…` / konfigurowalna), kodowanie **UTF-8**, tryb **append** lub polityka jawnie opisana (jak w `docs/Loggers.md`).
+  2. **`logging`** z `FileHandler` (oraz opcjonalnie `StreamHandler` **tylko** gdy `stderr.isatty()`), poziom co najmniej **INFO** dla przebiegu, **ERROR/exception** z **pełnym traceback** przy awarii głównej pętli lub `main()`.
+  3. **Pierwszy wpis po starcie** — identyfikacja procesu: np. **PID**, **ścieżka `sys.executable`**, **cwd**, wersja/ważne opcje konfiguracji (jak `START pid=…` w `scheduled_screenshots.py` / `save_tv_storage_state.py`).
+  4. **README** (folder skryptu lub `docs/`) — krótka sekcja **„Logi / diagnostyka”**: który plik, kiedy się pojawia, co oznaczają typowe linie; przy braku logu — co sprawdzić (ścieżka, harmonogram, `cwd`).
+
+- **Wiele skryptów w jednym obszarze (np. zapis sesji vs worker):** **osobne pliki logów** — nie mieszać jednego pliku bez uzasadnienia; jeśli są dwa lub więcej procesów — **tabela w `docs/*.md`** (wzór: `docs/TV_SCREENSHOT_LOGGING.md`: który plik ↔ który skrypt).
+
+- **Zależności zewnętrzne (Tesseract, Playwright, sieć, pliki):** jeśli błąd jest często **środowiskowy**, od pierwszej wersji **albo** jasny komunikat w logu + README (instalacja, PATH), **albo** mały skrypt / podkomenda **`diagnose_*.py`** (lub flaga `--diagnose`) drukująca JSON lub log: wersje, ścieżki, test połączenia — wzorzec: `scripts/tv_screenshot/diagnose_tv_session.py`.
+
+- **Konfiguracja (`*.json`):** jeśli skrypt czyta config — na starcie zalogować **rozwiązaną ścieżkę** do pliku config i **kluczowe** wartości (bez sekretów); przy błędzie parsowania — traceback do logu.
+
+- **Spójność z dokumentacją projektu:** jeśli skrypt wchodzi w istniejącą konwencję logowania — **w tej samej zmianie** zaktualizować **`docs/Loggers.md`** lub dedykowany plik w `docs/` (jak `TV_SCREENSHOT_LOGGING.md`), żeby tabela/nagłówki nie były przestarzałe.
+
+- **Wyjątki (diagnostyka może być minimalna):** jednorazowy skrypt **< ~30 linii**, wyłącznie **CLI** uruchamiany wyłącznie interaktywnie z konsoli i **tylko** `print` + `sys.exit(kod)` wystarcza — wtedy AI **jawnie** pisze w nagłówku pliku lub README: „brak pliku logu z założenia”. Nadal: sensowny **kod wyjścia** i komunikat błędu na **stderr** przy `sys.exit(1)`.
+
+- **Checklist dla AI przed uznaniem skryptu za „gotowy”:** [ ] plik logu + START z PID/exe/cwd, [ ] wyjątki z traceback do pliku, [ ] README sekcja logów, [ ] przy 2+ powiązanych procesach — tabela w docs, [ ] przy zewnętrznych binariach — diagnose lub README.
+
+## Logowanie — dokumentacja i spójność (Python / BAT / MQL5)
+
+- **Źródło prawdy:** `docs/Loggers.md` — formaty czasu, zachowanie `run_insert_PRE_last.log` / `run_insert_pytest_last.log` (nadpisywanie vs append), dwa wzorce referencyjne: **(A)** `logging` w Pythonie, **(B)** `Print` + `TimeToString` w EA jak w `DailySessionLogger_v2.mq5`.
+- **Wymóg:** Przy **każdej** zmianie polityki logowania albo dodaniu nowych zasad/plików logów powiązanych z tym projektem — **w tej samej zmianie** zaktualizować **`docs/Loggers.md`** (nie zostawiać rozjazdu między kodem a dokumentacją).
+- **BAT → plik `*_last.log`:** linie dodawane przez BAT powinny mieć prefiks czasu (`YYYY-MM-DD HH-mm-ss`); stdout z `py ... >> log` bez prefiksu per linia — opisane w `Loggers.md`; pełne timestampy per linia wymagają `logging` w skrypcie Python.
+- **`set /p`:** w tekście promptu **nie** umieszczać `*` (wildcard CMD może rozwinąć do nazw plików w CWD). Pytania Tak/Nie — preferuj **`choice /C TN`**.
+- **Po `choice`:** pełna reguła i uzasadnienie — **sekcja CMD powyżej, przykład ID-88** (`set "…=!ERRORLEVEL!"` **zabronione** w tym wzorcu; **`if errorlevel 2 goto …`** od wyższego progu).
+
 ## MQL5 – operacje na stringach / trim
 
 - **Zakaz:** AI nie używa `StringTrimLeft` / `StringTrimRight` z dodatkowymi parametrami (np. znak do usunięcia). W MQL5 te funkcje mają inną sygnaturę niż w C#/.NET – wywołanie z drugim parametrem powoduje błąd kompilacji „wrong parameters count”.
@@ -61,3 +143,12 @@ Po każdym wykrytym błędzie kompilacji lub podobnej wpadce AI dopisuje tu now�
   3) dopiero potem uznać plik za „gotowy do uruchomienia”.
 - **Wymóg operacyjny dla MT5:** AI ma przypominać, że sam plik `.mq5` nie wystarczy w Navigatorze – wymagane jest `F7` i wygenerowanie `.ex5` w tym samym profilu terminala.
 - **Wymóg ścieżek:** przy pracy na wielu profilach `Terminal\\<hash>` AI musi jawnie wskazać, do którego profilu skopiowano plik, i potwierdzić istnienie pliku docelowego.
+
+## [TV] TradingView — Pine Script (v5/v6)
+
+- **Fakt:** W Pine stałe rozmiaru to np. `size.small`, `size.tiny`, `size.normal` — **`size` nie jest słowem kluczowym typu** do deklaracji zmiennych (w przeciwieństwie do „enum-like” typów w innych językach).
+- **Zakaz:** `size lblSz = warunek ? size.tiny : size.small` — kompilator: *`"size" is not a valid type keyword`*.
+- **Wymóg:** Deklaracja bez typu: `lblSz = warunek ? size.tiny : size.small` (typ wywnioskuje kompilator z wyrażenia po prawej stronie).
+- **Wymóg ogólny [TV]:** Nie przenosić na Pine nawyków z TypeScript/C#/Java (jawne typy przy `=`, „struct”, itd.) bez sprawdzenia dokumentacji Pine / kompilacji w edytorze TradingView.
+- **Przykład w repo (po tej poprawce):** `scripts/tradingview/v3.4_TradingHeroes_HTF_FVG_Levels_numbered_touch.pine` — parametr rozmiaru etykiety dotykowej.
+- **Zrzuty zapisanego layoutu wykresu (PNG przez Playwright):** to **nie** jest Pine w repo — reguły silnika przeglądarki, sesji i headless są w sekcji **„Python — Playwright / automatyzacja Chromium”** powyżej; skrypty w `scripts/tv_screenshot/`.

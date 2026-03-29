@@ -13,9 +13,11 @@ Wyjście domyślnie: pliki *_INSERT.csv (pełna kopia wejściowych wierszy + dop
 żeby najpierw zweryfikować diff w Excelu / Notepad++ zanim podmienisz oryginał.
 
 Ograniczenia (HTML ≠ pełna historia MT5 API):
-  • Brak prawdziwej sesji EA (0→pozycje→flat w jednej minucie). Domyślnie: jedna
-    syntetyczna sesja na dzień kalendarzowy dla NOWYCH deali (--session-mode day),
-    albo jedna sesja na cały insert (--session-mode batch).
+  • `--layout positions-pl`: rekonstrukcja sesji jak w EA (licznik pozycji: +1 przy
+    czasie otwarcia kol. 0, −1 przy zamknięciu kol. 9), osobno na każdy dzień
+    kalendarzowy (czas z komórek HTML = czas serwera MT5 z raportu).
+  • `--layout deals-default`: brak czasu otwarcia w wierszu — tylko sesje syntetyczne
+    (--session-mode day lub batch).
   • Kolumny sesyjne (DD equity, margin %, itp.) — uzupełniane zerami / pusto tam,
     gdzie HTML nie dostarcza danych (zgodnie z formatem liczb jak w EA: przecinek).
 
@@ -29,6 +31,12 @@ Użycie (PowerShell, z korzenia repo):
 
   # Zapis plików *_INSERT.csv obok wejściowych (lub --deals-out / --summary-out):
   py scripts/csv_insert_from_mt5_html/insert_from_mt5_html.py --html Report.htm --konto 11693814 ...
+
+  # Tylko jeden dzień z dużego HTML (data z kolumny czasu deala):
+  py scripts/csv_insert_from_mt5_html/insert_from_mt5_html.py ... --only-date 2026-03-18
+
+  # Pasek postępu w CMD: domyślnie włączony (stderr); opcjonalnie: pip install tqdm
+  # Wyłączenie: --no-progress
 """
 from __future__ import annotations
 
@@ -42,7 +50,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
 # --- Schematy (musi być zgodne z DailySessionLogger_v2.mq5) ---
 DEALS_HEADER_18 = (
@@ -125,6 +133,14 @@ def date_str_ea(dt: datetime) -> str:
     return f"{dt.year:04d}-{dt.month:02d}-{dt.day:02d}"
 
 
+def normalize_only_date_arg(s: str) -> str:
+    """Walidacja `--only-date` (kalendarz wg czasu z komórki HTML, jak `date_str_ea`)."""
+    t = s.strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", t):
+        raise SystemExit("--only-date: oczekiwano YYYY-MM-DD (np. 2026-03-18)")
+    return t
+
+
 def parse_pl_number(s: str) -> float:
     s = strip_bom(s.strip().replace(" ", ""))
     s = s.replace(",", ".")
@@ -144,16 +160,79 @@ def clean_cell(raw: str) -> str:
 
 
 def iter_table_rows(html: str) -> Iterable[List[str]]:
-    """Wyciąga teksty komórek <td>...</td> dla każdego <tr>."""
-    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, flags=re.I | re.S):
+    """Wyciąga teksty komórek <td>...</td> dla każdego <tr> (strumieniowo — bez listy wszystkich <tr> naraz)."""
+    for m in re.finditer(r"<tr[^>]*>(.*?)</tr>", html, flags=re.I | re.S):
+        tr = m.group(1)
         cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, flags=re.I | re.S)
         if not cells:
             continue
         yield [clean_cell(c) for c in cells]
 
 
+def approx_table_row_count(html: str) -> int:
+    """Przybliżona liczba wierszy <tr> w HTML (do skali paska postępu; szybkie, bez pełnego regexa)."""
+    return html.lower().count("<tr")
+
+
+def iter_with_stderr_progress(
+    iterable: Iterable[List[str]],
+    *,
+    desc: str,
+    total_hint: Optional[int],
+    enabled: bool,
+) -> Iterator[List[str]]:
+    """
+    Pasek postępu na stderr w interaktywnym CMD (gdy stderr jest TTY).
+    Jeśli zainstalowane jest `tqdm`, używa go; w przeciwnym razie prosty %.
+    Przy przekierowaniu do pliku (np. `>> log.txt`) — bez paska.
+    """
+    if not enabled:
+        yield from iterable
+        return
+    it = iter(iterable)
+    if not sys.stderr.isatty():
+        yield from it
+        return
+    tqdm: Any
+    try:
+        from tqdm import tqdm as tqdm_cls  # type: ignore[import-not-found]
+
+        tqdm = tqdm_cls
+    except ImportError:
+        tqdm = None
+    if tqdm is not None:
+        yield from tqdm(
+            it,
+            total=total_hint,
+            desc=desc,
+            file=sys.stderr,
+            unit="wiersz",
+            mininterval=0.25,
+            dynamic_ncols=True,
+            ascii=True,
+        )
+        return
+    n = 0
+    last_pct = -1
+    for item in it:
+        n += 1
+        if total_hint and total_hint > 0:
+            pct = min(100, int(100.0 * n / total_hint))
+            if pct != last_pct or n <= 1:
+                last_pct = pct
+                sys.stderr.write(f"\r{desc} {n}/{total_hint} ({pct}%)   ")
+                sys.stderr.flush()
+        elif n % 2000 == 0 or n == 1:
+            sys.stderr.write(f"\r{desc} {n} wierszy...   ")
+            sys.stderr.flush()
+        yield item
+    sys.stderr.write("\r" + " " * 78 + "\r")
+    sys.stderr.flush()
+
+
 @dataclass
 class HtmlDeal:
+    # time = czas zamknięcia pozycji (jak deal_time w CSV EA); open_time = z HTML kol. „Czas” otwarcia (positions-pl)
     time: datetime
     ticket: str
     symbol: str
@@ -162,6 +241,7 @@ class HtmlDeal:
     price: float
     profit: float
     balance_after: Optional[float]
+    open_time: Optional[datetime] = None
 
 
 def row_looks_like_deal(cells: List[str], min_cols: int) -> bool:
@@ -187,7 +267,9 @@ def parse_deals_from_mt5_html(
     col_balance: int = -1,
     min_cols: int = 8,
     read_balance: bool = True,
-) -> List[HtmlDeal]:
+    show_progress: bool = True,
+    only_date_ymd: Optional[str] = None,
+) -> Tuple[List[HtmlDeal], int]:
     """
     Heurystyka dla typowego raportu MT5 (sekcja Deals): pierwsza kolumna czas,
     druga ticket. Typ buy/sell zwykle w kolumnie „Type”. Volume/Price/Profit
@@ -199,9 +281,24 @@ def parse_deals_from_mt5_html(
     1=ID pozycji (nie ten sam co deal_ticket w EA), 2=symbol, 3=buy/sell, 4=puste (hidden),
     5=wolumen, 6=cena otw., …, 9=czas zamknięcia, 10=cena zamk., 11=prowizja, 12=swap, 13=zysk.
     Dla insertu używamy **czasu zamknięcia** (kolumna 9) jako deal_time.
+
+    Zwraca (lista deali, liczba przetworzonych wierszy <tr>).
+    Gdy podano ``only_date_ymd`` (YYYY-MM-DD), odrzuca wiersze po dacie zamknięcia
+    zanim zrobi cięższe sprawdzenia — duży raport HTML jest wtedy znacznie szybszy.
     """
     deals: List[HtmlDeal] = []
-    for cells in iter_table_rows(html_text):
+    tr_rows = 0
+    total_hint = approx_table_row_count(html_text) if show_progress else None
+    row_iter: Iterable[List[str]] = iter_table_rows(html_text)
+    if show_progress:
+        row_iter = iter_with_stderr_progress(
+            row_iter,
+            desc="Parsowanie HTML",
+            total_hint=total_hint,
+            enabled=True,
+        )
+    for cells in row_iter:
+        tr_rows += 1
         n = len(cells)
         if n < min_cols:
             continue
@@ -209,10 +306,30 @@ def parse_deals_from_mt5_html(
         def idx(i: int) -> int:
             return i if i >= 0 else n + i
 
+        t_close: Optional[datetime] = None
+        if only_date_ymd is not None:
+            ci = idx(col_time)
+            if ci < 0 or ci >= n:
+                continue
+            t_close = parse_mt5_html_datetime(cells[ci])
+            if t_close is None:
+                continue
+            if date_str_ea(t_close) != only_date_ymd:
+                continue
+
         if not row_looks_like_deal(cells, min_cols):
             continue
 
-        t = parse_mt5_html_datetime(cells[col_time])
+        # Czas zamknięcia (deal_time) — kol. col_time; dla positions-pl (col_time=9) czas otwarcia w kol. 0
+        open_time: Optional[datetime] = None
+        if col_time != 0:
+            ot = parse_mt5_html_datetime(cells[0])
+            if ot is not None:
+                open_time = ot
+        if t_close is not None:
+            t = t_close
+        else:
+            t = parse_mt5_html_datetime(cells[col_time])
         if t is None:
             continue
         ticket = cells[col_ticket].strip()
@@ -247,11 +364,12 @@ def parse_deals_from_mt5_html(
                 price=prc,
                 profit=prof,
                 balance_after=bal if bal_cell else None,
+                open_time=open_time,
             )
         )
     # Stabilny porządek: czas, ticket
     deals.sort(key=lambda d: (d.time, int(d.ticket)))
-    return deals
+    return deals, tr_rows
 
 
 def read_sem_csv_rows(path: Path) -> Tuple[Optional[str], List[List[str]]]:
@@ -303,6 +421,32 @@ def existing_deal_tickets(deals_rows: List[List[str]]) -> Set[str]:
     return s
 
 
+def existing_deal_tickets_for_date(
+    deals_rows: List[List[str]], konto: str, ymd: Optional[str]
+) -> Set[str]:
+    """
+    Zbiór ticketów z istniejącego deals CSV dla wybranego konta i dnia.
+    deals_time w CSV ma format DD.MM.YYYY HH:MM.
+    """
+    if not ymd:
+        return existing_deal_tickets(deals_rows)
+    out: Set[str] = set()
+    for r in deals_rows[1:]:
+        if len(r) < 5:
+            continue
+        if r[1].strip() != str(konto):
+            continue
+        deal_time = r[3].strip()
+        m = re.match(r"^(\d{2})\.(\d{2})\.(\d{4})\s+\d{2}:\d{2}$", deal_time)
+        if not m:
+            continue
+        dd, mm, yy = m.groups()
+        row_ymd = f"{yy}-{mm}-{dd}"
+        if row_ymd == ymd:
+            out.add(r[4].strip())
+    return out
+
+
 def max_session_id_for_konto(rows: List[List[str]], konto: str) -> int:
     m = 0
     for r in rows[1:]:
@@ -310,10 +454,10 @@ def max_session_id_for_konto(rows: List[List[str]], konto: str) -> int:
             continue
         if r[1].strip() != str(konto):
             continue
-        try:
-            m = max(m, int(float(r[2])))
-        except ValueError:
+        sid = parse_excel_int(r[2].strip())
+        if sid is None:
             continue
+        m = max(m, sid)
     return m
 
 
@@ -322,8 +466,279 @@ def summary_keys(rows: List[List[str]]) -> Set[Tuple[str, str, str]]:
     for r in rows[1:]:
         if len(r) < 3:
             continue
-        keys.add((r[0].strip(), r[1].strip(), r[2].strip()))
+        raw_d = r[0].strip()
+        d_key = summary_cell_date_to_ymd(raw_d) or raw_d
+        sid_norm = parse_excel_int(r[2].strip())
+        sid_key = str(sid_norm) if sid_norm is not None else r[2].strip()
+        keys.add((d_key, r[1].strip(), sid_key))
     return keys
+
+
+def ymd_to_int(ymd: str) -> Optional[int]:
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", ymd.strip())
+    if not m:
+        return None
+    y, mo, d = m.groups()
+    return int(f"{y}{mo}{d}")
+
+
+def summary_cell_date_to_ymd(cell: str) -> Optional[str]:
+    """
+    Normalizacja kolumny ``date`` w DailySessionSummary (jak w Excel / eksport MT5):
+    ``YYYY-MM-DD`` (jak ``date_str_ea``) albo ``DD.MM.YYYY``.
+    """
+    s = cell.strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        return s
+    m = re.fullmatch(r"(\d{2})\.(\d{2})\.(\d{4})", s)
+    if m:
+        dd, mm, yy = m.groups()
+        return f"{yy}-{mm}-{dd}"
+    return None
+
+
+def parse_excel_int(s: str) -> Optional[int]:
+    """
+    Obsługa liczb zapisanych jako tekst przez Excela/MT5:
+    - czasem pojawia się apostrof wiodący, np. `'4`
+    - czasem wartości mają dodatkowe znaki
+    """
+    t = s.strip()
+    if not t:
+        return None
+    # Excel często prefiksuje liczby tekstowe apostrofem.
+    if t.startswith("'"):
+        t = t[1:].strip()
+    m = re.search(r"[-+]?\d+", t)
+    if not m:
+        return None
+    try:
+        return int(m.group(0))
+    except ValueError:
+        return None
+
+
+def previous_end_balance_for_day(
+    summary_rows: List[List[str]], konto: str, day_ymd: str
+) -> Optional[float]:
+    """
+    Znajdź ostatni znany end_balance dla konta z daty < day_ymd.
+    Używane do rekonstrukcji start/end balance nowych sesji.
+    Porównanie dat po znormalizowaniu (ISO oraz DD.MM.YYYY w pliku summary).
+    """
+    target = ymd_to_int(day_ymd)
+    if target is None:
+        return None
+    best_date = -1
+    best_sid = -1
+    best_val: Optional[float] = None
+    for r in summary_rows[1:]:
+        if len(r) < 5:
+            continue
+        if r[1].strip() != str(konto):
+            continue
+        d_norm = summary_cell_date_to_ymd(r[0].strip())
+        if d_norm is None:
+            continue
+        d_int = ymd_to_int(d_norm)
+        if d_int is None or d_int >= target:
+            continue
+        sid = parse_excel_int(r[2].strip())
+        end_raw = r[4].strip()
+        if end_raw == "":
+            continue
+        end_val = parse_pl_number(end_raw)
+        if sid is None:
+            sid = -1
+        if d_int > best_date or (d_int == best_date and sid > best_sid):
+            best_date = d_int
+            best_sid = sid
+            best_val = end_val
+    return best_val
+
+
+def floor_minute(dt: datetime) -> datetime:
+    """Jak FloorToMinute w EA: sekundy zerowane."""
+    return dt.replace(second=0, microsecond=0)
+
+
+def build_sessions_ea_flat_from_deals(
+    deals: List[HtmlDeal], base_session_id: int
+) -> List[Tuple[int, List[HtmlDeal], str, str]]:
+    """
+    Sesja jak w .cursorrules_General: start gdy liczba pozycji 0 -> >0, koniec przy flat (0).
+    Symulacja z HTML „Pozycje”: +1 przy czasie otwarcia (kol. 0), -1 przy zamknięciu (kol. 9).
+    Zwraca listę (session_id, deale w sesji, minute_session_start, minute_session_end).
+    """
+    if not deals:
+        return []
+    if any(d.open_time is None for d in deals):
+        g = build_synthetic_sessions(deals, "day", base_session_id)
+        out: List[Tuple[int, List[HtmlDeal], str, str]] = []
+        for _k, (sid, gdeals) in sorted(g.items(), key=lambda x: x[1][0]):
+            if not gdeals:
+                continue
+            sb = floor_minute(gdeals[0].time)
+            se = floor_minute(gdeals[-1].time)
+            out.append(
+                (
+                    sid,
+                    sorted(gdeals, key=lambda x: (x.time, int(x.ticket))),
+                    minute_str_local_ea(sb),
+                    minute_str_local_ea(se),
+                )
+            )
+        return out
+
+    events: List[Tuple[datetime, int, str]] = []
+    for d in deals:
+        ot = floor_minute(d.open_time) if d.open_time else floor_minute(d.time)
+        ct = floor_minute(d.time)
+        events.append((ot, 1, d.ticket))
+        events.append((ct, -1, d.ticket))
+    # Ten sam timestamp: najpierw zamknięcia (-1), potem otwarcia (+1) — flat zanim startuje następna sesja
+    events.sort(key=lambda x: (x[0], 0 if x[1] < 0 else 1))
+
+    count = 0
+    sess_start: Optional[datetime] = None
+    sess_bounds: List[Tuple[datetime, datetime]] = []
+
+    for t, delta, _ticket in events:
+        prev = count
+        count += delta
+        if prev == 0 and count > 0:
+            sess_start = t
+        elif prev > 0 and count == 0 and sess_start is not None:
+            se = t
+            if se < sess_start:
+                sess_start, se = se, sess_start
+            sess_bounds.append((sess_start, se))
+            sess_start = None
+
+    if count > 0 and sess_start is not None:
+        last_close = max(floor_minute(d.time) for d in deals)
+        if last_close < sess_start:
+            last_close = sess_start
+        sess_bounds.append((sess_start, last_close))
+
+    if not sess_bounds:
+        g = build_synthetic_sessions(deals, "day", base_session_id)
+        out: List[Tuple[int, List[HtmlDeal], str, str]] = []
+        for _k, (sid, gdeals) in sorted(g.items(), key=lambda x: x[1][0]):
+            if not gdeals:
+                continue
+            sb = floor_minute(gdeals[0].time)
+            se = floor_minute(gdeals[-1].time)
+            out.append(
+                (
+                    sid,
+                    sorted(gdeals, key=lambda x: (x.time, int(x.ticket))),
+                    minute_str_local_ea(sb),
+                    minute_str_local_ea(se),
+                )
+            )
+        return out
+
+    groups: List[List[HtmlDeal]] = [[] for _ in sess_bounds]
+    for d in deals:
+        cd = floor_minute(d.time)
+        placed = False
+        for i, (sb, se) in enumerate(sess_bounds):
+            if cd >= sb and cd <= se:
+                groups[i].append(d)
+                placed = True
+                break
+        if not placed and sess_bounds:
+            groups[-1].append(d)
+
+    result: List[Tuple[int, List[HtmlDeal], str, str]] = []
+    next_sid = base_session_id + 1
+    for (sb, se), gdeals in zip(sess_bounds, groups):
+        if not gdeals:
+            continue
+        sid = next_sid
+        next_sid += 1
+        gdeals.sort(key=lambda x: (x.time, int(x.ticket)))
+        result.append(
+            (sid, gdeals, minute_str_local_ea(sb), minute_str_local_ea(se))
+        )
+    return result
+
+
+def build_sessions_for_insert(
+    deals: List[HtmlDeal],
+    *,
+    layout: str,
+    session_mode: str,
+    base_session_id: int,
+) -> List[Tuple[int, List[HtmlDeal], str, str]]:
+    """
+    Jedna lista bloków sesji do zapisu deals + summary.
+    • deals-default / batch: syntetyczne sesje (day lub batch).
+    • positions-pl: per dzień kalendarzowy symulacja flat (0→pozycje→0), jak EA.
+    """
+    if not deals:
+        return []
+    if layout != "positions-pl":
+        g = build_synthetic_sessions(deals, session_mode, base_session_id)
+        out: List[Tuple[int, List[HtmlDeal], str, str]] = []
+        for _k, (sid, gdeals) in sorted(g.items(), key=lambda x: x[1][0]):
+            if not gdeals:
+                continue
+            t0 = gdeals[0].time.replace(second=0, microsecond=0)
+            t1 = gdeals[-1].time.replace(second=0, microsecond=0)
+            out.append(
+                (sid, gdeals, minute_str_local_ea(t0), minute_str_local_ea(t1))
+            )
+        return out
+
+    # positions-pl: nie mieszaj dni — osobna symulacja flat na każdy YYYY-MM-DD
+    by_day: Dict[str, List[HtmlDeal]] = defaultdict(list)
+    for d in deals:
+        by_day[date_str_ea(d.time)].append(d)
+    result: List[Tuple[int, List[HtmlDeal], str, str]] = []
+    cur_base = base_session_id
+    for day_key in sorted(by_day.keys()):
+        day_deals = sorted(
+            by_day[day_key], key=lambda x: (x.time, int(x.ticket))
+        )
+        part = build_sessions_ea_flat_from_deals(day_deals, cur_base)
+        result.extend(part)
+        if part:
+            cur_base = max(sid for sid, _, _, _ in part)
+    return result
+
+
+def compute_session_max_total_lot(gdeals: List[HtmlDeal]) -> float:
+    """
+    Dokładny max_total_lot w sesji:
+    suma wolumenów jednocześnie otwartych pozycji (open +vol, close -vol).
+    """
+    if not gdeals:
+        return 0.0
+    if any(d.open_time is None for d in gdeals):
+        # Fallback dla layoutów bez czasu otwarcia.
+        return max((d.volume for d in gdeals), default=0.0)
+
+    events: List[Tuple[datetime, int, float]] = []
+    for d in gdeals:
+        ot = floor_minute(d.open_time) if d.open_time else floor_minute(d.time)
+        ct = floor_minute(d.time)
+        # Ten sam timestamp: najpierw close, potem open (spójne z sesjami flat).
+        events.append((ct, 0, -abs(d.volume)))
+        events.append((ot, 1, abs(d.volume)))
+    events.sort(key=lambda x: (x[0], x[1]))
+
+    current = 0.0
+    max_seen = 0.0
+    for _t, _ord, dv in events:
+        current += dv
+        # Ochrona przed drobnymi driftami i kolejnością skrajną.
+        if current < 0:
+            current = 0.0
+        if current > max_seen:
+            max_seen = current
+    return max_seen
 
 
 def build_synthetic_sessions(
@@ -391,14 +806,15 @@ def make_summary_row(
     deals: List[HtmlDeal],
     minute_start: str,
     minute_end: str,
+    start_balance: Optional[float],
+    end_balance: Optional[float],
+    max_total_lot: float,
 ) -> List[str]:
     total_profit = sum(x.profit for x in deals)
     max_lot = max((x.volume for x in deals), default=0.0)
-    start_b = ""
-    end_b = ""
-    if deals[0].balance_after is not None:
-        # HTML zwykle ma Balance po każdym wierszu — przybliżenie końca
-        end_b = pl_num(deals[-1].balance_after or 0.0, 2)
+    # Start/end balance: rekonstrukcja z poprzedniego dnia + kumulacja profitów sesji.
+    start_b = "" if start_balance is None else pl_num(start_balance, 2)
+    end_b = "" if end_balance is None else pl_num(end_balance, 2)
     return [
         day_date,
         str(konto),
@@ -408,7 +824,7 @@ def make_summary_row(
         pl_num(0.0, 2),
         pl_num(total_profit, 2),
         pl_lot(max_lot),
-        pl_lot(max_lot),
+        pl_lot(max_total_lot),
         pl_num(0.0, 2),
         pl_num(0.0, 2) + "%",
         "",
@@ -421,7 +837,27 @@ def default_insert_path(path: Path, suffix: str) -> Path:
     return path.with_name(path.stem + suffix + path.suffix)
 
 
+def default_pytest_path(path: Path, kind: str, konto: str) -> Path:
+    """
+    Tryb testowy: generuj stabilne nazwy wyjściowe, żeby nie ruszać produkcyjnych CSV.
+    - deals  -> DailySessionDeals<konto>_pyTEST.csv
+    - summary-> DailySessionSummary_pyTEST.csv
+    """
+    if kind == "deals":
+        return path.with_name(f"DailySessionDeals{konto}_pyTEST.csv")
+    return path.with_name("DailySessionSummary_pyTEST.csv")
+
+
 def main() -> None:
+    # Stabilizuj kodowanie stdout/stderr pod Windows (cmd/cp1252),
+    # aby logi z polskimi znakami nie wysypywały parsera podczas print().
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        # Starsze/interaktywne środowiska mogą nie wspierać reconfigure.
+        pass
+
     ap = argparse.ArgumentParser(
         description="INSERT brakujących danych do kopii CSV z raportu HTML MT5."
     )
@@ -444,6 +880,13 @@ def main() -> None:
         default="_INSERT",
         help="Przyrostek nazwy gdy --deals-out / --summary-out nie podano",
     )
+    # Tryb bezpieczny do porównania wyników parsera z HTML:
+    # zapisuj wyłącznie do plików *_pyTEST.csv (bez nadpisywania produkcyjnych wejść).
+    ap.add_argument(
+        "--test-outputs",
+        action="store_true",
+        help="Domyślne wyjścia: DailySessionDeals<konto>_pyTEST.csv i DailySessionSummary_pyTEST.csv",
+    )
     ap.add_argument(
         "--session-mode",
         choices=("day", "batch"),
@@ -451,6 +894,17 @@ def main() -> None:
         help="Jak grupować brakujące deale w syntetyczne sesje",
     )
     ap.add_argument("--dry-run", action="store_true", help="Tylko podsumowanie, bez zapisu")
+    ap.add_argument(
+        "--only-date",
+        type=str,
+        default=None,
+        help="Filtruj deale z HTML do jednego dnia YYYY-MM-DD",
+    )
+    ap.add_argument(
+        "--qa-report",
+        action="store_true",
+        help="Wypisz raport porównania jakości: HTML vs istniejący deals CSV",
+    )
     ap.add_argument(
         "--layout",
         choices=("deals-default", "positions-pl"),
@@ -466,6 +920,11 @@ def main() -> None:
     ap.add_argument("--col-profit", type=int, default=None)
     ap.add_argument("--col-balance", type=int, default=None)
     ap.add_argument("--min-cols", type=int, default=None)
+    ap.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Wyłącz pasek postępu przy parsowaniu HTML (np. skrypty bez TTY)",
+    )
     args = ap.parse_args()
     konto = str(args.konto).strip()
 
@@ -493,7 +952,10 @@ def main() -> None:
     min_cols = args.min_cols if args.min_cols is not None else min_c
 
     html_text = read_path_mt5_text(args.html)
-    html_deals = parse_deals_from_mt5_html(
+    only_parse: Optional[str] = None
+    if args.only_date is not None:
+        only_parse = normalize_only_date_arg(args.only_date)
+    html_deals, tr_scanned = parse_deals_from_mt5_html(
         html_text,
         col_time=col_time,
         col_ticket=col_ticket,
@@ -505,7 +967,15 @@ def main() -> None:
         col_balance=col_balance,
         min_cols=min_cols,
         read_balance=read_balance,
+        show_progress=not args.no_progress,
+        only_date_ymd=only_parse,
     )
+    if only_parse is not None:
+        print(
+            f"Filtr --only-date={only_parse}: wierszy <tr> przetworzonych={tr_scanned} "
+            f"-> dealow dla tego dnia={len(html_deals)}",
+            file=sys.stderr,
+        )
     if not html_deals:
         print(
             "UWAGA: z HTML nie wyciągnięto żadnych wierszy buy/sell. "
@@ -515,29 +985,51 @@ def main() -> None:
 
     written_any = False
 
+    # Tryb testowy jest do walidacji konkretnego dnia, nie do hurtowego merge.
+    if args.test_outputs and args.only_date is None:
+        raise SystemExit("--test-outputs wymaga --only-date YYYY-MM-DD")
+
     if args.deals_in:
         sep_d, drows = read_sem_csv_rows(args.deals_in)
         if not drows:
             raise SystemExit("--deals-in: pusty plik")
         validate_header(drows[0], EXPECTED_DEALS_COLS, "deals nagłówek")
         tickets = existing_deal_tickets(drows)
+        tickets_scope = existing_deal_tickets_for_date(drows, konto, args.only_date)
+        html_tickets = {d.ticket for d in html_deals}
+        if args.qa_report:
+            common = html_tickets & tickets_scope
+            html_only = html_tickets - tickets_scope
+            csv_only = tickets_scope - html_tickets
+            print(
+                f"QA deals[{args.only_date or 'ALL'} konto={konto}]: "
+                f"html={len(html_tickets)} csv_scope={len(tickets_scope)} "
+                f"common={len(common)} html_only={len(html_only)} csv_only={len(csv_only)}"
+            )
+            if html_only:
+                ex = ",".join(sorted(list(html_only))[:10])
+                print(f"QA html_only sample: {ex}")
+            if csv_only:
+                ex = ",".join(sorted(list(csv_only))[:10])
+                print(f"QA csv_only sample: {ex}")
         missing = [d for d in html_deals if d.ticket not in tickets]
         base_sid = max_session_id_for_konto(drows, konto)
-        sessions = build_synthetic_sessions(missing, args.session_mode, base_sid)
+        # positions-pl: sesje z symulacji flat (open/close z HTML); inaczej syntetyczne day/batch
+        sessions = build_sessions_for_insert(
+            missing,
+            layout=args.layout,
+            session_mode=args.session_mode,
+            base_session_id=base_sid,
+        )
 
         new_rows: List[List[str]] = []
-        for _gkey, (sid, gdeals) in sorted(
-            sessions.items(), key=lambda x: x[1][0]
-        ):
+        for sid, gdeals, ms, me in sessions:
             if not gdeals:
                 continue
             day_date = date_str_ea(gdeals[0].time)
             total_p = sum(x.profit for x in gdeals)
-            max_lot = max(x.volume for x in gdeals)
-            t0 = gdeals[0].time.replace(second=0, microsecond=0)
-            t1 = gdeals[-1].time.replace(second=0, microsecond=0)
-            ms = minute_str_local_ea(t0)
-            me = minute_str_local_ea(t1)
+            # max_total_lot = realna suma jednocześnie otwartych lotów w sesji.
+            max_lot = compute_session_max_total_lot(gdeals)
             for d in gdeals:
                 new_rows.append(
                     make_deal_csv_row(
@@ -552,9 +1044,13 @@ def main() -> None:
                     )
                 )
 
-        out_deals = args.deals_out or default_insert_path(
-            args.deals_in, args.insert_suffix
-        )
+        if args.deals_out:
+            out_deals = args.deals_out
+        elif args.test_outputs:
+            # Tryb pyTEST: stabilna nazwa testowa per konto.
+            out_deals = default_pytest_path(args.deals_in, "deals", konto)
+        else:
+            out_deals = default_insert_path(args.deals_in, args.insert_suffix)
         print(
             f"Deals: HTML={len(html_deals)} istniejących ticketów={len(tickets)} "
             f"do dopisania={len(new_rows)} -> {out_deals}"
@@ -571,7 +1067,11 @@ def main() -> None:
                     int(r[4].strip()) if r[4].strip().isdigit() else 0,
                 )
             )
-            write_sem_csv(out_deals, sep_use, [header] + drows[1:] + new_rows)
+            # Tryb pyTEST: zapis tylko wygenerowanych wierszy z HTML (bez pełnej kopii wejścia).
+            if args.test_outputs:
+                write_sem_csv(out_deals, sep_use, [header] + new_rows)
+            else:
+                write_sem_csv(out_deals, sep_use, [header] + drows[1:] + new_rows)
             written_any = True
 
     if args.summary_in:
@@ -587,41 +1087,72 @@ def main() -> None:
         tickets2 = existing_deal_tickets(drows2)
         missing2 = [d for d in html_deals if d.ticket not in tickets2]
         base_sid2 = max_session_id_for_konto(drows2, konto)
-        sessions2 = build_synthetic_sessions(missing2, args.session_mode, base_sid2)
+        sessions2 = build_sessions_for_insert(
+            missing2,
+            layout=args.layout,
+            session_mode=args.session_mode,
+            base_session_id=base_sid2,
+        )
 
         sum_new: List[List[str]] = []
-        for gkey, (sid, gdeals) in sorted(
-            sessions2.items(), key=lambda x: x[1][0]
-        ):
+        # Grupuj sesje po dniu, aby odtworzyć start/end balance sekwencyjnie.
+        sessions_by_day: Dict[str, List[Tuple[int, List[HtmlDeal], str, str]]] = defaultdict(list)
+        for sid, gdeals, ms, me in sessions2:
             if not gdeals:
                 continue
-            day_date = date_str_ea(gdeals[0].time)
-            sk = (day_date, konto, str(sid))
-            if sk in keys:
-                continue
-            t0 = gdeals[0].time.replace(second=0, microsecond=0)
-            t1 = gdeals[-1].time.replace(second=0, microsecond=0)
-            sum_new.append(
-                make_summary_row(
-                    konto,
-                    sid,
-                    day_date,
-                    gdeals,
-                    minute_str_local_ea(t0),
-                    minute_str_local_ea(t1),
-                )
-            )
-            keys.add(sk)
+            sessions_by_day[date_str_ea(gdeals[0].time)].append((sid, gdeals, ms, me))
 
-        out_sum = args.summary_out or default_insert_path(
-            args.summary_in, args.insert_suffix
-        )
+        for day_date in sorted(sessions_by_day.keys()):
+            day_sessions = sorted(sessions_by_day[day_date], key=lambda x: x[0])
+            # Start dnia = ostatni znany end_balance z wcześniejszej daty.
+            day_balance = previous_end_balance_for_day(srows, konto, day_date)
+            for sid, gdeals, ms, me in day_sessions:
+                sk = (day_date, konto, str(sid))
+                if sk in keys:
+                    continue
+                # max_session_profit w summary = suma profit_only deali sesji (jak w wierszach deals INSERT).
+                max_session_profit = sum(x.profit for x in gdeals)
+                start_b = day_balance
+                end_b = (
+                    (day_balance + max_session_profit)
+                    if day_balance is not None
+                    else None
+                )
+                sum_new.append(
+                    make_summary_row(
+                        konto,
+                        sid,
+                        day_date,
+                        gdeals,
+                        ms,
+                        me,
+                        start_b,
+                        end_b,
+                        compute_session_max_total_lot(gdeals),
+                    )
+                )
+                # Następna sesja zaczyna od końca poprzedniej (jeśli mamy bazowy balans).
+                if end_b is not None:
+                    day_balance = end_b
+                keys.add(sk)
+
+        if args.summary_out:
+            out_sum = args.summary_out
+        elif args.test_outputs:
+            # Tryb pyTEST: jedna nazwa testowa summary (globalny plik podsumowania).
+            out_sum = default_pytest_path(args.summary_in, "summary", konto)
+        else:
+            out_sum = default_insert_path(args.summary_in, args.insert_suffix)
         print(
-            f"Summary: nowe wiersze sesji (syntetyczne)={len(sum_new)} -> {out_sum}"
+            f"Summary: nowe wiersze sesji={len(sum_new)} -> {out_sum}"
         )
         if sum_new and not args.dry_run:
             sep_use = sep_s if sep_s else "sep=;"
-            write_sem_csv(out_sum, sep_use, [srows[0]] + srows[1:] + sum_new)
+            # Tryb pyTEST: zapis tylko nowo wygenerowanych podsumowań sesji.
+            if args.test_outputs:
+                write_sem_csv(out_sum, sep_use, [srows[0]] + sum_new)
+            else:
+                write_sem_csv(out_sum, sep_use, [srows[0]] + srows[1:] + sum_new)
             written_any = True
 
     if not args.deals_in and not args.summary_in:

@@ -12,5 +12,7 @@ Dotyczy to w szczególności:
 - raportów CSV i ich schematów (np. docs/AccountAgeReport_VERIFICATION.md),
 - zasad kodowania i reguł po błędach (.curorrules-coding_improvment itp., jeśli są przechowywane jako .md),
 - każdego innego pliku `*.md` w katalogu projektu, który opisuje zachowanie lub strukturę kodu zmienianego w danej sesji.
+- **Rejestr kont i komend:** `docs/trading_accounts_mt5.md` oraz `docs/POWERSHELL_COMMANDS.md` — utrzymanie jak w `.cursorrules_General` **§1d.8** (nowe konto / nowy `DailySessionDeals*` / nowa komenda PowerShell → aktualizacja docs, nie tylko czat).
+- **Inventory junctionów:** `docs/JUNCTIONS_INVENTORY.md` + wpis w `scripts/junctions/junctions_manifest.txt` — przy **każdym** nowym junctionie w rootcie repo (§**1d.9** w `.cursorrules_General`).
 
 **Bez aktualizacji dokumentacji zmiana kodu jest niekompletna.**

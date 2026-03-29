@@ -13,7 +13,7 @@
 //| Mapowanie: docs/EXPORT_DAILY_HTML_JUNCTIONS.md                    |
 //+------------------------------------------------------------------+
 #property copyright "DailySessionLogger_v2 helper"
-#property version   "1.01"
+#property version   "1.02"
 #property strict
 
 // Nazwa obiektu przycisku na wykresie (unikalna per ChartID)
@@ -32,6 +32,10 @@ input string InpFileNamePrefix   = "ReportHistoryAuto"; // plik: <prefix>-<login
 input bool   InpRunOnceNow       = false;  // true = jednorazowy eksport przy starcie (bez czekania na 23:59)
 input bool   InpShowExportButton = true;   // przycisk na wykresie „Eksport HTML teraz” (pokazowy / bez czekania do 23:59)
 input int    InpTimerSeconds     = 1;      // jak często sprawdzać zegar (1 s = precyzyjne 23:59)
+
+// --- opcjonalny dzień docelowy (tylko RunOnce + przycisk; harmonogram 23:59 = zawsze „dziś”) ---
+input bool   InpUseCustomDay     = false;  // true = zakres całego dnia InpDayYmd (00:00–23:59 serwera), nie „północ→teraz”
+input string InpDayYmd           = "";     // YYYY-MM-DD gdy InpUseCustomDay=true (czas brokera)
 
 // Flaga: żeby nie wyeksportować dwa razy tego samego dnia kalendarzowego serwera
 int g_exported_ymd = 0;
@@ -54,7 +58,7 @@ void CreateExportButtonOnChart()
    string nm = EdhButtonName();
    if(ObjectFind(0, nm) >= 0)
       return;
-   // Tworzymy przycisk — klik wywołuje eksport tego samego dnia co harmonogram
+   // Tworzymy przycisk — klik wywołuje ExportDayHtml(false): „dziś” lub InpDayYmd wg inputów
    if(!ObjectCreate(0, nm, OBJ_BUTTON, 0, 0, 0))
    {
       Print("ExportDailyHistoryHtml: ObjectCreate button failed, err=", GetLastError());
@@ -91,6 +95,34 @@ datetime DayStartServer(datetime t)
    dt.min  = 0;
    dt.sec  = 0;
    return StructToTime(dt);
+}
+
+//+------------------------------------------------------------------+
+//| Parsowanie InpDayYmd „YYYY-MM-DD” → północ tego dnia (serwer)    |
+//+------------------------------------------------------------------+
+bool ParseDayYmdServer(const string s, datetime &out_day_start)
+{
+   string t = s;
+   StringTrimLeft(t);
+   StringTrimRight(t);
+   if(StringLen(t) != 10)
+      return false;
+   if(StringGetCharacter(t, 4) != '-' || StringGetCharacter(t, 7) != '-')
+      return false;
+   int y  = (int)StringToInteger(StringSubstr(t, 0, 4));
+   int mo = (int)StringToInteger(StringSubstr(t, 5, 2));
+   int d  = (int)StringToInteger(StringSubstr(t, 8, 2));
+   if(y < 2000 || mo < 1 || mo > 12 || d < 1 || d > 31)
+      return false;
+   MqlDateTime dt;
+   dt.year = y;
+   dt.mon  = mo;
+   dt.day  = d;
+   dt.hour = 0;
+   dt.min  = 0;
+   dt.sec  = 0;
+   out_day_start = StructToTime(dt);
+   return (out_day_start > 0);
 }
 
 //+------------------------------------------------------------------+
@@ -168,13 +200,49 @@ string BuildDealRow(const ulong deal_ticket)
 }
 
 //+------------------------------------------------------------------+
-//| Eksport całego dnia (od północy serwera do „teraz”)              |
+//| Eksport HTML dealów w zadanym przedziale czasu serwera            |
+//| scheduled_call=true: harmonogram — zawsze „dziś” od północy do    |
+//|   TimeTradeServer().                                              |
+//| scheduled_call=false: RunOnce / przycisk — przy InpUseCustomDay   |
+//|   pełny dzień InpDayYmd (00:00–23:59:59); inaczej jak harmonogram.|
 //+------------------------------------------------------------------+
-bool ExportDayHtml()
+bool ExportDayHtml(const bool scheduled_call)
 {
-   datetime now = TimeTradeServer();
-   datetime day_start = DayStartServer(now);
-   datetime day_end   = now; // przy odpaleniu o 23:59 obejmuje prawie cały dzień
+   datetime day_start;
+   datetime day_end;
+   string   date_tag;
+
+   if(scheduled_call || !InpUseCustomDay)
+   {
+      // Standard: od północy bieżącego dnia serwera do „teraz”
+      datetime now = TimeTradeServer();
+      day_start = DayStartServer(now);
+      day_end   = now;
+      MqlDateTime dtx;
+      TimeToStruct(day_start, dtx);
+      date_tag = StringFormat("%04d-%02d-%02d", dtx.year, dtx.mon, dtx.day);
+   }
+   else
+   {
+      // Pełny wskazany dzień kalendarzowy (serwer)
+      string raw = InpDayYmd;
+      StringTrimLeft(raw);
+      StringTrimRight(raw);
+      if(StringLen(raw) < 10)
+      {
+         Print("ExportDailyHistoryHtml: InpUseCustomDay=true — ustaw InpDayYmd jako YYYY-MM-DD");
+         return false;
+      }
+      if(!ParseDayYmdServer(raw, day_start))
+      {
+         Print("ExportDailyHistoryHtml: niepoprawny InpDayYmd='", InpDayYmd, "'");
+         return false;
+      }
+      day_end = day_start + 86400 - 1;
+      MqlDateTime dtc;
+      TimeToStruct(day_start, dtc);
+      date_tag = StringFormat("%04d-%02d-%02d", dtc.year, dtc.mon, dtc.day);
+   }
 
    if(!HistorySelect(day_start, day_end))
    {
@@ -220,9 +288,6 @@ bool ExportDayHtml()
    if(StringLen(rel_dir) > 0)
       FolderCreate(rel_dir, FILE_COMMON);
 
-   MqlDateTime dtx;
-   TimeToStruct(day_start, dtx);
-   string date_tag = StringFormat("%04d-%02d-%02d", dtx.year, dtx.mon, dtx.day);
    string fname = InpFileNamePrefix + "-" + IntegerToString(login) + "_" + date_tag + ".html";
    if(StringLen(rel_dir) > 0)
       fname = rel_dir + "\\" + fname;
@@ -260,7 +325,10 @@ bool ExportDayHtml()
       return false;
    }
    FileClose(handle);
-   Print("ExportDailyHistoryHtml: OK nDeals=", n, " file=", fname, " COMMON\\Files");
+   Print("ExportDailyHistoryHtml: OK nDeals=", n, " range=",
+         TimeToString(day_start, TIME_DATE | TIME_SECONDS), " .. ",
+         TimeToString(day_end, TIME_DATE | TIME_SECONDS),
+         " file=", fname, " COMMON\\Files");
    return true;
 }
 
@@ -297,7 +365,7 @@ int OnInit()
    if(InpRunOnceNow)
    {
       int ymd = YmdServer(TimeTradeServer());
-      if(ExportDayHtml())
+      if(ExportDayHtml(false))
          g_exported_ymd = ymd;
    }
    return INIT_SUCCEEDED;
@@ -333,7 +401,7 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
    if(sparam != EdhButtonName())
       return;
    // Ręczny eksport: nie ustawiamy g_exported_ymd — harmonogram o 23:59 nadal może zapisać ponownie
-   bool ok = ExportDayHtml();
+   bool ok = ExportDayHtml(false);
    ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
    ChartRedraw(0);
    if(ok)

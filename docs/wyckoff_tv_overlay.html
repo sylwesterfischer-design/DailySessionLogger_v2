@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Wyckoff overlay — accumulation-2</title>
+  <style>
+    body { font-family: Segoe UI, Arial, sans-serif; margin: 16px; background: #1e1e1e; color: #ddd; }
+    code { background: #333; padding: 2px 6px; }
+    #wrap { position: relative; display: inline-block; max-width: 100%; border: 1px solid #444; background: #000; line-height: 0; }
+    #cap { display: block; max-width: 100%; height: auto; vertical-align: top; }
+    #ov { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+    .hint { max-width: 960px; margin-bottom: 12px; line-height: 1.45; }
+    .ref { color: #81c784; font-size: 0.95em; margin-top: 8px; }
+    .def { max-width: 960px; margin: 10px 0 14px; font-size: 0.88em; line-height: 1.4; color: #b0bec5; }
+    .def dt { font-weight: 700; color: #eceff1; margin-top: 6px; }
+    .def dd { margin: 2px 0 0 1em; }
+    #loadedInfo { margin-top: 10px; font-size: 13px; }
+    #loadedInfo.warn { color: #ffb74d; font-weight: 600; }
+    #loadedInfo.ok { color: #81c784; }
+  </style>
+</head>
+<body>
+  <!-- MUST: Wyckoff_ALL/accu-2.png — markery skalibrowane pod strzałki (knoty) na zrzucie użytkownika -->
+  <p class="hint">
+    <strong>Zrzut w <code>docs/</code> (kolejność ładowania):</strong><br/>
+    1) <code>wyckoff_tv_capture_btc15s _oznaczenia_HH_LH_LL_LH.png</code> — obecny plik (spacja przed <code>_oznaczenia</code>)<br/>
+    2) <code>wyckoff_tv_capture_btc15s_oznaczenia_HH_LH_LL_LH.png</code> — ta sama nazwa bez spacji<br/>
+    3) <code>wyckoff_tv_capture_btc15s_oznaczenia.png</code><br/>
+    4) <code>wyckoff_tv_capture_btc15s.png</code> — starszy fallback (pomarańczowe ostrzeżenie).<br/>
+    <code>?strict=1</code> = tylko pkt 1–3, bez starego PNG.
+  </p>
+  <p class="ref">
+    Referencja: <code>Wyckoff_ALL/accu-2.png</code>. Każdy punkt: <strong>oś X = środek świecy</strong> zdarzenia; <strong>oś Y = knot</strong> (definicja poniżej). Etykieta tekstowa zawsze <em>po stronie przeciwnej</em> do knotu (nad szczytem / pod dołkiem).
+  </p>
+  <dl class="def">
+    <dt>SC</dt><dd>Kulminacja paniki — <strong>dolny knot</strong> świecy, która kończy zrzut w fazie A (ekstremum lokalne supply).</dd>
+    <dt>AR</dt><dd>Automatyczny rally — <strong>górny knot</strong> pierwszego wyraźnego odbicia po SC; ustala górę trading range.</dd>
+    <dt>ST</dt><dd>Test wtórny — <strong>dolny knot</strong> zjazdu „sprawdzającego” dno po AR (często wyżej niż SC).</dd>
+    <dt>Spring</dt><dd>Shakeout — <strong>dolny knot najniższej świecy w całej strukturze</strong> (LL): tymczasowe przebicie supportu TR, natychmiastowy powrót. Punkt <strong>pod</strong> tym knotem, nie obok świecy.</dd>
+    <dt>TEST</dt><dd>Test po springu — zwykle <strong>dolny knot</strong> mniejszej korekty (sprawdzenie braku supply u dołu po springu).</dd>
+    <dt>LPS</dt><dd>Ostatni punkt wsparcia przed SOS — <strong>dolny knot</strong> ostatniego istotnego wyższego dołka w fazie D (ostatnia okazja dla popytu przed wybiciem).</dd>
+    <dt>SOS</dt><dd>Znak siły — <strong>górny knot</strong> impulsu przebijającego opór (wyraźna akcja w górę).</dd>
+    <dt>BU / LPS</dt><dd>Back-up — <strong>dolny knot</strong> cofki po SOS, retest przebitej strefy jako wsparcie.</dd>
+  </dl>
+  <div id="wrap">
+    <img id="cap" alt="Zrzut TV"/>
+    <svg id="ov" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+  <p id="loadedInfo" class="ok"></p>
+  <p id="err" style="color:#f88; margin-top:8px; display:none;"></p>
+
+  <script>
+(function () {
+  var PRESET = 'accumulation';
+  var strict = /[?&]strict=1(?:&|$)/.test(window.location.search);
+
+  var CAPTURE_NEW = [
+    'wyckoff_tv_capture_btc15s _oznaczenia_HH_LH_LL_LH.png',
+    'wyckoff_tv_capture_btc15s_oznaczenia_HH_LH_LL_LH.png',
+    'wyckoff_tv_capture_btc15s_oznaczenia.png'
+  ];
+  var CAPTURE_FALLBACK = ['wyckoff_tv_capture_btc15s.png'];
+  var CAPTURE_FILES = strict ? CAPTURE_NEW.slice() : CAPTURE_NEW.concat(CAPTURE_FALLBACK);
+
+  // Obszar wykresu (ułamki pełnego PNG TV): dopasowanie pod knoty, nie „środek świecy”
+  var DEFAULT_PLOT = { left: 0.074, right: 0.994, top: 0.178, bottom: 0.970 };
+
+  var PRESETS = {
+    accumulation: {
+      ref: 'Wyckoff_ALL/accu-2.png',
+      plotArea: DEFAULT_PLOT,
+      lineX0: 0.074,
+      lineX1: 0.994,
+      // Poziome: górna pomarańcza / „creek” / dolna pomarańcza (jak na zrzucie)
+      lines: { resistance: 0.265, creek: 0.478, support: 0.772 },
+      // pivot: 'high' | 'low' — wymusza etykietę nad / pod knotem; x = środek kolumny świecy zdarzenia
+      markers: [
+        { key: 'SC', x: 0.076, y: 0.868, pivot: 'low', color: '#2e7d32', sub: 'Phase A · dolny knot' },
+        { key: 'AR', x: 0.120, y: 0.288, pivot: 'high', color: '#c62828', sub: 'sufit TR · górny knot' },
+        { key: 'ST', x: 0.156, y: 0.712, pivot: 'low', color: '#1565c0', sub: 'test strefy SC · dolny knot', small: true },
+        { key: 'Phase B', x: 0.352, y: 0.485, color: '#9e9e9e', sub: 'cause (środek range)', small: true },
+        { key: 'Spring?', x: 0.526, y: 0.924, pivot: 'low', color: '#6a1b9a', sub: 'LL min. całej bazy · dolny knot', small: true },
+        { key: 'TEST', x: 0.566, y: 0.618, pivot: 'low', color: '#ef6c00', sub: 'test po springu · dolny knot', small: true },
+        { key: 'LPS', x: 0.748, y: 0.285, pivot: 'low', color: '#00838f', sub: 'ostatni HL przed SOS · dolny knot', small: true },
+        { key: 'SOS', x: 0.832, y: 0.198, pivot: 'high', color: '#2e7d32', sub: 'wybicie · górny knot' },
+        { key: 'BU/LPS', x: 0.888, y: 0.352, pivot: 'low', color: '#00695c', sub: 'BU · dolny knot cofki' },
+        { key: 'Phase E', x: 0.948, y: 0.158, pivot: 'high', color: '#689f38', sub: 'markup', small: true }
+      ]
+    },
+    redistribution: {
+      ref: 'Wyckoff_ALL/redistribution-2.png',
+      plotArea: DEFAULT_PLOT,
+      lineX0: 0.074,
+      lineX1: 0.994,
+      lines: { resistance: 0.248, creek: 0.465, support: 0.758 },
+      markers: [
+        { key: 'SC', x: 0.075, y: 0.768, pivot: 'low', color: '#2e7d32', sub: 'Phase A · dolny knot' },
+        { key: 'SOW', x: 0.102, y: 0.835, pivot: 'low', color: '#6d4c41', sub: '1 · dolny knot', small: true },
+        { key: 'AR', x: 0.152, y: 0.252, pivot: 'high', color: '#c62828', sub: 'sufit TR · górny knot' },
+        { key: 'UT/ST', x: 0.332, y: 0.198, pivot: 'high', color: '#c62828', sub: 'upthrust · górny knot', small: true },
+        { key: 'SOW', x: 0.458, y: 0.742, pivot: 'low', color: '#6d4c41', sub: '2 · dolny knot', small: true },
+        { key: 'TEST?', x: 0.592, y: 0.258, pivot: 'high', color: '#ef6c00', sub: 'LH · górny knot', small: true },
+        { key: 'LPS?', x: 0.718, y: 0.428, pivot: 'high', color: '#7b1fa2', sub: 'LPSY · górny knot', small: true },
+        { key: 'SOW', x: 0.902, y: 0.858, pivot: 'low', color: '#b71c1c', sub: '3 · markdown · dolny knot', small: true }
+      ]
+    }
+  };
+
+  var CONFIG = PRESETS[PRESET] || PRESETS.redistribution;
+
+  var img = document.getElementById('cap');
+  var svg = document.getElementById('ov');
+  var err = document.getElementById('err');
+  var loadedInfo = document.getElementById('loadedInfo');
+  var capIdx = 0;
+
+  function encSrc(name) {
+    return name.split('/').map(function (part) { return encodeURIComponent(part); }).join('/');
+  }
+
+  function showErr(msg) {
+    err.style.display = 'block';
+    err.textContent = msg;
+  }
+
+  function plotRect(w, h, pa) {
+    var L = pa.left * w;
+    var R = pa.right * w;
+    var T = pa.top * h;
+    var B = pa.bottom * h;
+    return { L: L, R: R, T: T, B: B, W: R - L, H: B - T };
+  }
+
+  function pxX(nx, pr) {
+    return pr.L + nx * pr.W;
+  }
+
+  function pxY(ny, pr) {
+    return pr.T + ny * pr.H;
+  }
+
+  function layout() {
+    err.style.display = 'none';
+    if (!img.naturalWidth || !img.naturalHeight) {
+      showErr('Brak obrazka. Pliki: ' + CAPTURE_FILES.join(' | '));
+      return;
+    }
+
+    var w = img.clientWidth;
+    var h = img.clientHeight;
+    var nw = img.naturalWidth;
+    var nh = img.naturalHeight;
+
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    svg.setAttribute('width', w);
+    svg.setAttribute('height', h);
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    var pa = CONFIG.plotArea || DEFAULT_PLOT;
+    var pr = plotRect(w, h, pa);
+
+    var strokeW = Math.max(1.2, Math.min(3.5, nh / 320));
+    var dash = (12 * w / nw) + ',' + (8 * w / nw);
+    var x0 = (CONFIG.lineX0 !== undefined ? CONFIG.lineX0 : pa.left) * w;
+    var x1 = (CONFIG.lineX1 !== undefined ? CONFIG.lineX1 : pa.right) * w;
+    var colors = { resistance: '#e53935', creek: '#1e88e5', support: '#43a047' };
+
+    Object.keys(CONFIG.lines).forEach(function (name) {
+      var ny = CONFIG.lines[name];
+      var y = pxY(ny, pr);
+      var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', x0);
+      line.setAttribute('x2', x1);
+      line.setAttribute('y1', y);
+      line.setAttribute('y2', y);
+      line.setAttribute('stroke', colors[name] || '#888');
+      line.setAttribute('stroke-width', strokeW);
+      line.setAttribute('stroke-dasharray', dash);
+      line.setAttribute('opacity', '0.9');
+      svg.appendChild(line);
+    });
+
+    var fs = Math.max(10, Math.min(15, nh / 56));
+    var fsSub = fs * 0.64;
+    var rDot = Math.max(3, Math.min(5.5, nh * 0.006));
+
+    CONFIG.markers.forEach(function (m) {
+      var cx = pxX(m.x, pr);
+      var cy = pxY(m.y, pr);
+      var isHigh = m.pivot === 'high';
+      var isLow = m.pivot === 'low';
+
+      var c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('cx', cx);
+      c.setAttribute('cy', cy);
+      c.setAttribute('r', rDot);
+      c.setAttribute('fill', '#fff');
+      c.setAttribute('stroke', m.color);
+      c.setAttribute('stroke-width', strokeW);
+      svg.appendChild(c);
+
+      var tdx = m.textDx !== undefined ? m.textDx : 0;
+      var gap = 9;
+      var ty;
+      var subY;
+      var subShift = fsSub + 3;
+      if (m.textDy !== undefined) {
+        ty = cy + m.textDy;
+        subY = ty + (isHigh ? subShift : -subShift);
+      } else if (isHigh) {
+        ty = cy - gap;
+        subY = ty - subShift;
+      } else if (isLow) {
+        ty = cy + gap;
+        subY = ty + subShift;
+      } else {
+        var up = m.y < 0.36;
+        ty = cy + (up ? gap : -gap);
+        subY = ty + (up ? subShift : -subShift);
+      }
+      var tx = cx + tdx;
+
+      var t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', tx);
+      t.setAttribute('y', ty);
+      t.setAttribute('fill', m.color);
+      t.setAttribute('font-size', m.small ? fs * 0.78 : fs);
+      t.setAttribute('font-weight', '700');
+      t.setAttribute('font-family', 'Segoe UI, Arial, sans-serif');
+      t.setAttribute('text-anchor', 'middle');
+      t.setAttribute('dominant-baseline', 'middle');
+      t.textContent = m.key;
+      svg.appendChild(t);
+
+      if (m.sub) {
+        var t2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t2.setAttribute('x', tx);
+        t2.setAttribute('y', subY);
+        t2.setAttribute('fill', '#bdbdbd');
+        t2.setAttribute('font-size', fsSub);
+        t2.setAttribute('font-family', 'Segoe UI, Arial, sans-serif');
+        t2.setAttribute('text-anchor', 'middle');
+        t2.setAttribute('dominant-baseline', 'middle');
+        t2.textContent = m.sub;
+        svg.appendChild(t2);
+      }
+    });
+  }
+
+  function nextCapture() {
+    if (capIdx >= CAPTURE_FILES.length) {
+      showErr('Brak PNG w docs/. Dodaj: ' + CAPTURE_NEW[0]);
+      loadedInfo.textContent = '';
+      loadedInfo.className = '';
+      return;
+    }
+    img.src = encSrc(CAPTURE_FILES[capIdx]);
+  }
+
+  img.addEventListener('error', function () {
+    capIdx += 1;
+    nextCapture();
+  });
+
+  img.addEventListener('load', function () {
+    err.style.display = 'none';
+    var name = CAPTURE_FILES[capIdx];
+    var isNew = CAPTURE_NEW.indexOf(name) >= 0;
+    loadedInfo.className = isNew ? 'ok' : 'warn';
+    loadedInfo.textContent = isNew
+      ? 'Wczytano (nowa seria): ' + name
+      : 'UWAGA: wczytano STARSZY plik (fallback): ' + name + ' — pierwszy plik z HH/LH nie został znaleziony w docs/.';
+    layout();
+  });
+
+  window.addEventListener('resize', layout);
+  nextCapture();
+})();
+  </script>
+</body>
+</html>
